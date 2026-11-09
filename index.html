@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Справочник «Колокол»</title>
+<meta name="description" content="Даты, деятели, термины, правила, произведения и карты для школы, ОГЭ и ЕГЭ — справочник бота @Kolokolgame">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔔</text></svg>">
+<!-- async: если telegram.org недоступен, страница всё равно открывается сразу -->
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6b6f76; --line: #e3e1da;
+  --accent: #2f6f5e; --accent-ink: #ffffff; --chip: #ecebe5; --mark: #fff3bf; --band: #f0efe9;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #2e3238;
+    --accent: #5fb39a; --accent-ink: #0f1513; --chip: #272a2f; --mark: #4a4220; --band: #23262b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #2e3238;
+  --accent: #5fb39a; --accent-ink: #0f1513; --chip: #272a2f; --mark: #4a4220; --band: #23262b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-text-size-adjust: 100%; }
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+  padding: 10px 16px 8px; }
+h1 { font-size: 17px; margin: 0 0 8px; font-weight: 650; }
+h1 small { color: var(--muted); font-weight: 400; font-size: 13px; }
+.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 6px; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 0; border-radius: 999px; padding: 6px 12px; background: var(--chip); color: var(--ink);
+  font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.chips.small .chip { font-size: 13px; padding: 5px 10px; }
+.filters { display: grid; grid-template-columns: auto 1fr; gap: 6px; margin-top: 2px; }
+.filters select, .filters input { font: inherit; font-size: 14px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; min-width: 0; width: 100%; }
+.filters input { grid-column: 1 / -1; }
+main { padding: 12px 16px 40px; max-width: 1200px; margin: 0 auto; }
+.count { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--line); }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); background: var(--band); font-weight: 600; }
+tr.topic td { background: var(--band); font-weight: 650; font-size: 14px; color: var(--accent); }
+td img { width: 140px; max-width: 100%; height: auto; border-radius: 6px; display: block; background: #fff; }
+td small { color: var(--muted); }
+mark { background: var(--mark); color: inherit; border-radius: 2px; }
+.empty { text-align: center; color: var(--muted); padding: 40px 0; }
+footer { color: var(--muted); font-size: 12px; text-align: center; padding: 10px 16px 30px; }
+@media (min-width: 760px) {
+  .filters { grid-template-columns: 180px 1fr 1fr; }
+  .filters input { grid-column: auto; }
+  td img { width: 200px; }
+}
+/* На телефоне строка таблицы — карточка: подписи столбцов перед значением */
+@media (max-width: 759px) {
+  table, tbody, tr, td { display: block; width: 100%; }
+  thead { display: none; }
+  table { border: 0; background: none; }
+  tr.item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; padding: 6px 0; }
+  tr.item td { border: 0; padding: 3px 12px; }
+  tr.item td:empty { display: none; }
+  tr.item td[data-label]:not([data-label=""]):not(:first-child)::before { content: attr(data-label); display: block;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  tr.topic td { border: 0; margin: 14px 0 8px; background: none; padding: 0 2px; }
+  td img { width: 100%; max-width: 420px; }
+  h1 small { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔔 Справочник «Колокол» <small>· всё для повторения</small></h1>
+  <nav class="chips" id="subjects" aria-label="Предмет"></nav>
+  <nav class="chips small" id="tabs" aria-label="Раздел"></nav>
+  <div class="filters">
+    <select id="mode" aria-label="Класс или экзамен"></select>
+    <select id="topic" aria-label="Тема"></select>
+    <input id="q" type="search" placeholder="🔎 Поиск: слово, имя, год…" autocomplete="off">
+  </div>
+</header>
+<main>
+  <p class="count" id="count"></p>
+  <div id="out"></div>
+</main>
+<footer>Справочник бота <a href="https://t.me/Kolokolgame">@Kolokolgame</a>. Нашли ошибку — напишите в боте «✉️ Написать нам».</footer>
+<script>
+const MENU = [{"key": "hist", "title": "🏛 История", "modes": ["5", "6", "7", "8", "9", "10", "11", "oge", "ege"]}, {"key": "soc", "title": "⚖️ Обществознание", "modes": ["6", "7", "8", "9", "10", "11", "oge", "ege"]}, {"key": "rus", "title": "✍️ Русский язык", "modes": ["5", "6", "7", "8", "9", "10", "11", "oge", "ege"]}, {"key": "lit", "title": "📚 Литература", "modes": ["5", "6", "7", "8", "9", "10", "11", "oge", "ege"]}, {"key": "bio", "title": "🧬 Биология", "modes": ["5", "6", "7", "8", "9", "10", "11", "oge", "ege"]}, {"key": "geo", "title": "🌍 География", "modes": ["5", "6", "7", "8", "9", "10", "11", "oge", "ege"]}];
+const MODE_TITLES = {oge: "ОГЭ", ege: "ЕГЭ"};
+const state = {subject: MENU[0].key, tab: "", mode: "all", topic: -1, q: ""};
+const $ = id => document.getElementById(id);
+const norm = s => s.toLowerCase().replace(/ё/g, "е");
+
+function initTelegram() {
+  const tg = window.Telegram && Telegram.WebApp;
+  if (!tg || !tg.initData) return;  // открыт не из Telegram
+  tg.ready(); tg.expand();
+  if (tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
+}
+if (window.Telegram) initTelegram();  // скрипт Telegram успел загрузиться раньше этой строки
+
+function load(key) {
+  return new Promise((ok, fail) => {
+    if (window.DATA && DATA[key]) return ok(DATA[key]);
+    const s = document.createElement("script");
+    s.src = `data/${key}.js`;
+    s.onload = () => ok(DATA[key]);
+    s.onerror = fail;
+    document.head.appendChild(s);
+  });
+}
+
+function inMode(grade, oge, ege) {
+  const m = state.mode;
+  return m === "all" || (m === "oge" ? oge : m === "ege" ? ege : grade === +m);
+}
+
+function chip(label, pressed, onclick) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = label; b.setAttribute("aria-pressed", pressed); b.onclick = onclick;
+  return b;
+}
+
+function readHash() {
+  const [subject, tab, mode] = decodeURIComponent(location.hash.slice(1)).split("/");
+  if (MENU.some(m => m.key === subject)) state.subject = subject;
+  if (tab) state.tab = tab;
+  if (mode) state.mode = mode;
+}
+
+function writeHash() {
+  history.replaceState(null, "", `#${state.subject}/${state.tab}/${state.mode}`);
+}
+
+function highlight(html, words) {
+  if (!words.length) return html;
+  // подсветка только в тексте, не в тегах
+  return html.replace(/(^|>)([^<]+)/g, (all, gt, text) => {
+    let t = text;
+    for (const w of words) {
+      const re = new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/е/g, "[её]"), "gi");
+      t = t.replace(re, m => `\u0001${m}\u0002`);
+    }
+    return gt + t.replace(/\u0001/g, "<mark>").replace(/\u0002/g, "</mark>");
+  });
+}
+
+async function render() {
+  const data = await load(state.subject);
+  // предметы
+  const subj = $("subjects"); subj.replaceChildren();
+  for (const m of MENU) subj.appendChild(chip(m.title, m.key === state.subject, () => {
+    state.subject = m.key; state.topic = -1; render();
+  }));
+  // режимы
+  if (state.mode !== "all" && !data.modes.includes(state.mode)) state.mode = "all";
+  const mode = $("mode"); mode.replaceChildren(new Option("Все классы", "all"));
+  for (const m of data.modes) mode.appendChild(new Option(MODE_TITLES[m] || `${m} класс`, m));
+  mode.value = state.mode;
+  // вкладки: только те, где в этом классе есть материал
+  const tabsHere = data.tabs.filter(t => t.rows.some(r => inMode(r[1], r[2], r[3])));
+  if (!tabsHere.some(t => t.key === state.tab)) state.tab = (tabsHere[0] || data.tabs[0]).key;
+  const tabs = $("tabs"); tabs.replaceChildren();
+  for (const t of tabsHere) tabs.appendChild(chip(`${t.title} ${t.rows.filter(r => inMode(r[1], r[2], r[3])).length}`,
+    t.key === state.tab, () => { state.tab = t.key; render(); }));
+  const tab = data.tabs.find(t => t.key === state.tab);
+  // темы
+  const rows = tab.rows.filter(r => inMode(r[1], r[2], r[3]));
+  const topics = [...new Set(rows.map(r => r[0]))];
+  if (!topics.includes(state.topic)) state.topic = -1;
+  const sel = $("topic"); sel.replaceChildren(new Option(`Все темы (${topics.length})`, -1));
+  for (const t of topics) sel.appendChild(new Option(data.topics[t][0], t));
+  sel.value = state.topic;
+  writeHash();
+  draw(data, tab, rows);
+  const active = tabs.querySelector('[aria-pressed="true"]');
+  if (active) active.scrollIntoView({block: "nearest", inline: "nearest"});
+}
+
+function draw(data, tab, rows) {
+  const words = norm(state.q).split(/\s+/).filter(Boolean);
+  const shown = rows.filter(r => (state.topic < 0 || r[0] === state.topic) &&
+    (!words.length || words.every(w => norm(r[4].join(" ").replace(/<[^>]+>/g, " ")).includes(w))));
+  $("count").textContent = shown.length ? `Найдено: ${shown.length}` : "";
+  if (!shown.length) {
+    $("out").innerHTML = `<p class="empty">Ничего не нашлось. Попробуй другое слово или «Все темы».</p>`;
+    return;
+  }
+  const head = tab.head;
+  let html = `<table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>`;
+  let last = -1;
+  for (const r of shown) {
+    if (r[0] !== last) {
+      last = r[0];
+      const t = data.topics[r[0]];
+      html += `<tr class="topic"><td colspan="${head.length}">${t[0]}</td></tr>`;
+    }
+    html += `<tr class="item">${r[4].map((c, i) => `<td data-label="${head[i]}">${highlight(c, words)}</td>`).join("")}</tr>`;
+  }
+  $("out").innerHTML = html + "</tbody></table>";
+}
+
+$("mode").onchange = e => { state.mode = e.target.value; render(); };
+$("topic").onchange = e => { state.topic = +e.target.value; render(); window.scrollTo(0, 0); };
+let timer;
+$("q").oninput = e => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); render(); }, 150); };
+window.addEventListener("hashchange", () => { readHash(); render(); });
+readHash();
+render();
+</script>
+</body>
+</html>
