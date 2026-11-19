@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: собери материк из стран или Россию из округов и регионов, как пазл.">
+<title>Собери карту</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧩</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+:root { --sea: #d3e6f0; --land: #c4c0b4; --slot: #fffaf0; --edge: #ffffff; --ink2: #2a2f35;
+  --p1: #9fd4bf; --p2: #a9c6f0; --p3: #f6cf86; --p4: #f2a9bf; --p5: #c6b6f2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --sea: #14212a; --land: #2a2d31; --slot: #626872; --edge: #15171a; --ink2: #f1efe8;
+  --p1: #3f8f76; --p2: #4a72a8; --p3: #a8822f; --p4: #a85272; --p5: #6f5fb0; } }
+:root[data-theme="dark"] { --sea: #14212a; --land: #2a2d31; --slot: #626872; --edge: #15171a; --ink2: #f1efe8;
+  --p1: #3f8f76; --p2: #4a72a8; --p3: #a8822f; --p4: #a85272; --p5: #6f5fb0; }
+.board { border: 1px solid var(--line); border-radius: 12px; overflow: auto; background: var(--sea); max-height: 62vh;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.board svg { display: block; width: 100%; height: auto; user-select: none; -webkit-user-select: none; }
+.zoom { display: flex; gap: 6px; }
+.zoom button { padding: 4px 12px; font-size: 18px; line-height: 1; }
+.bg { fill: var(--land); }
+.rus { fill: var(--land); stroke: var(--edge); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.slot { fill: var(--slot); stroke: var(--slot); stroke-width: 1px; vector-effect: non-scaling-stroke; }  /* без щелей: силуэт, а не готовые границы */
+.done { stroke: var(--edge); stroke-width: 1px; vector-effect: non-scaling-stroke; fill-rule: evenodd; }
+.flash { animation: flash .9s ease-out 2; }
+@keyframes flash { 50% { opacity: .25; } }
+.lbl { fill: var(--ink2); font-weight: 650; text-anchor: middle; dominant-baseline: middle; paint-order: stroke; stroke: var(--panel);
+  stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.tray { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: center; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.handle { width: 110px; height: 90px; border: 2px dashed var(--accent); border-radius: 10px; display: grid; place-items: center;
+  touch-action: none; cursor: grab; background: var(--bg); }
+.handle svg { width: 96px; height: 76px; pointer-events: none; }
+.handle.shake { animation: shake .35s; border-color: var(--hit); }
+@keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.pname { font-size: 19px; font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
+.pnote { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.float { position: fixed; left: 0; top: 0; pointer-events: none; z-index: 10; opacity: .85; filter: drop-shadow(0 4px 8px rgba(0,0,0,.35)); }
+.small { padding: 8px 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>🧩 Собери карту</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Собери материк из стран или Россию из округов и регионов. Перетащи пальцем кусочек на его место на карте: рядом с верным местом он прилипнет. Ошибся — кусочек вернётся, после трёх ошибок он сам покажет, где он. Совсем мелкие страны и регионы уже стоят на месте.</p>
+  </header>
+  <section class="sheet">
+    <h2>Что собираем</h2>
+    <div class="choices" id="sets"></div>
+    <p class="note" id="none" hidden>Пазлы — только по географии.</p>
+  </section>
+  <p class="note">Границы — как в школьном атласе России. Контуры — Natural Earth.</p>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="left"></span><span id="score"></span></div>
+  </div>
+  <div class="top"><span class="note">Мелко? Увеличь карту и прокрути её пальцем.</span>
+    <div class="zoom"><button id="zout" aria-label="Уменьшить карту">−</button><button id="zin" aria-label="Увеличить карту">+</button></div></div>
+  <div class="board" id="board"></div>
+  <div class="tray">
+    <div class="handle" id="handle" aria-label="Кусочек — перетащи на карту"></div>
+    <div>
+      <div class="pname" id="pname"></div>
+      <div class="pnote" id="pnote">Тащи кусочек на карту 👆</div>
+      <div class="row" style="margin-top:8px"><button class="small" id="skip">Пропустить ↪️</button></div>
+    </div>
+  </div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1 id="otitle"></h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="hits"></p>
+    <p id="best"></p>
+  </section>
+  <div class="board" id="board2"></div>
+  <section class="sheet" id="errbox">
+    <h2>Где ошибся</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за кусочки, которые ты поставил сам, и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Наборы — data/puzzle/*.js (собирает tools/build_puzzle.py): w, h — размер картинки; bg — суша; rus — другие регионы России;
+// p — кусочки: n — название, d — контур, b — рамка [x0, y0, x1, y1], l — место подписи, fix — мелкий, стоит сразу.
+// Опыт — буква c в app/games.py: кусочек, поставленный самим учеником (не показанный после трёх ошибок).
+const NS = "http://www.w3.org/2000/svg", COLORS = ["--p1", "--p2", "--p3", "--p4", "--p5"], POINTS = [10, 6, 3], TRIES = 3;
+const best = records("puzzle");
+let SETS = [], state = null, drag = null;
+
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.append(e);
+  return e;
+}
+const center = p => [(p.b[0] + p.b[2]) / 2, (p.b[1] + p.b[3]) / 2];
+const diag = p => Math.hypot(p.b[2] - p.b[0], p.b[3] - p.b[1]);
+const color = i => `var(${COLORS[i % COLORS.length]})`;
+
+function loadSet(id, done) {
+  const s = document.createElement("script");
+  s.src = `data/puzzle/${id}.js?v=1`;
+  s.onload = () => done(window.PUZZLE);
+  s.onerror = () => { $("hint").textContent = "Не удалось загрузить карту. Проверь интернет."; };
+  document.head.append(s);
+}
+
+function drawBoard(box, data) {
+  const svg = el("svg", {viewBox: `0 0 ${data.w} ${data.h}`});
+  el("rect", {width: data.w, height: data.h, fill: "var(--sea)"}, svg);
+  el("path", {d: data.bg, class: "bg", "fill-rule": "evenodd"}, svg);
+  if (data.rus) el("path", {d: data.rus, class: "rus", "fill-rule": "evenodd"}, svg);
+  const slots = el("g", {}, svg), done = el("g", {}, svg), labels = el("g", {}, svg);
+  data.p.forEach(p => el("path", {d: p.d, class: "slot", "fill-rule": "evenodd"}, slots));
+  box.replaceChildren(svg);
+  return {svg, done, labels};
+}
+
+function place(view, data, p, i, cls = "") {
+  el("path", {d: p.d, class: "done " + cls, fill: color(i)}, view.done);
+  label(view, data, p);
+}
+
+function label(view, data, p) {
+  // подпись 9–13 пикселей на экране, если помещается в кусочек (с запасом); мелким — без подписи
+  const scale = view.svg.getBoundingClientRect().width / data.w || 1;
+  const wpx = (p.b[2] - p.b[0]) * scale, hpx = (p.b[3] - p.b[1]) * scale;
+  const px = Math.min(13, Math.max(9, Math.min(hpx / 2, wpx * 1.6 / (p.n.length * 0.55))));
+  if (p.n.length * 0.55 * px > wpx * 1.6 || hpx < 10) return;
+  const t = el("text", {x: p.l[0], y: p.l[1], class: "lbl", "font-size": (px / scale).toFixed(1), "stroke-width": (2.5 / scale).toFixed(2)}, view.labels);
+  t.textContent = p.n;
+  const r = t.getBBox();  // налезает на другую подпись — убираем
+  if ((view.boxes = view.boxes || []).some(q => r.x < q.x + q.width && q.x < r.x + r.width && r.y < q.y + q.height && q.y < r.y + r.height)) t.remove();
+  else view.boxes.push(r);
+}
+
+function start(set) {
+  loadSet(set.id, data => {
+    const order = shuffle(data.p.map((p, i) => i).filter(i => !data.p[i].fix));
+    state = {set, data, queue: order, total: order.length, placed: 0, own: 0, score: 0, miss: new Map(), tries: 0, zoom: 1};
+    show("game");
+    state.view = drawBoard($("board"), data);
+    zoom(0);
+    data.p.forEach((p, i) => { if (p.fix) place(state.view, data, p, i); });
+    nextPiece();
+  });
+}
+
+function nextPiece() {
+  const s = state;
+  $("left").textContent = `🧩 ${s.total - s.queue.length}/${s.total}`;
+  $("score").textContent = points(s.score);
+  if (!s.queue.length) return finish();
+  const p = s.data.p[s.queue[0]];
+  s.tries = 0;
+  $("pname").textContent = p.n;
+  $("pnote").textContent = "Тащи кусочек на карту 👆";
+  const w = p.b[2] - p.b[0], h = p.b[3] - p.b[1], pad = Math.max(w, h) * .06;
+  const svg = el("svg", {viewBox: `${p.b[0] - pad} ${p.b[1] - pad} ${w + 2 * pad} ${h + 2 * pad}`, preserveAspectRatio: "xMidYMid meet"});
+  el("path", {d: p.d, fill: color(s.queue[0]), "fill-rule": "evenodd"}, svg);
+  $("handle").replaceChildren(svg);
+}
+
+// Перетаскивание: под пальцем — кусочек в масштабе карты, чуть выше пальца, чтобы его было видно
+function down(e) {
+  if (!state || !state.queue.length) return;
+  e.preventDefault();
+  const s = state, i = s.queue[0], p = s.data.p[i];
+  const scale = s.view.svg.getBoundingClientRect().width / s.data.w;
+  const w = (p.b[2] - p.b[0]) * scale, h = (p.b[3] - p.b[1]) * scale;
+  const f = el("svg", {class: "float", width: Math.max(w, 2), height: Math.max(h, 2), viewBox: `${p.b[0]} ${p.b[1]} ${p.b[2] - p.b[0]} ${p.b[3] - p.b[1]}`});
+  el("path", {d: p.d, fill: color(i), "fill-rule": "evenodd", stroke: "var(--ink)", "stroke-width": 1, "vector-effect": "non-scaling-stroke"}, f);
+  document.body.append(f);
+  drag = {f, w, h, lift: Math.max(40, h / 2 + 24), id: e.pointerId};
+  $("handle").setPointerCapture(e.pointerId);
+  move(e);
+}
+
+function move(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  drag.x = e.clientX; drag.y = e.clientY - drag.lift;
+  drag.f.style.transform = `translate(${drag.x - drag.w / 2}px, ${drag.y - drag.h / 2}px)`;
+}
+
+function up(e) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag;
+  drag = null;
+  d.f.remove();
+  const s = state, i = s.queue[0], p = s.data.p[i];
+  const r = s.view.svg.getBoundingClientRect(), scale = r.width / s.data.w, vis = $("board").getBoundingClientRect();
+  const inBoard = d.x >= vis.left && d.x <= vis.right && d.y >= vis.top && d.y <= vis.bottom;
+  if (!inBoard) { $("hint").textContent = "Положи кусочек на карту"; $("hint").className = "hint"; return; }
+  const x = (d.x - r.left) / scale, y = (d.y - r.top) / scale, [cx, cy] = center(p);
+  const tol = Math.max(22 / scale, diag(p) * 0.16);
+  if (Math.hypot(x - cx, y - cy) <= tol) return good(i, p);
+  s.tries++;
+  s.miss.set(p.n, (s.miss.get(p.n) || 0) + 1);
+  $("handle").classList.remove("shake"); void $("handle").offsetWidth; $("handle").classList.add("shake");
+  if (s.tries >= TRIES) {
+    place(s.view, s.data, p, i, "flash");
+    s.queue.shift(); s.placed++;
+    $("hint").textContent = `Вот где ${p.n} — мигает на карте`; $("hint").className = "hint";
+    return nextPiece();
+  }
+  $("hint").textContent = `Не здесь. Осталось попыток: ${TRIES - s.tries}`; $("hint").className = "hint";
+  $("pnote").textContent = "Попробуй ещё раз";
+}
+
+function good(i, p) {
+  const s = state, got = POINTS[s.tries] || 0;
+  s.score += got; s.own++; s.placed++;
+  place(s.view, s.data, p, i);
+  s.queue.shift();
+  $("hint").textContent = `✅ ${p.n}! +${points(got)}`; $("hint").className = "hint ok";
+  nextPiece();
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const max = s.total * POINTS[0];
+  const record = s.placed === s.total && best.save(s.set.id, s.score);
+  $("otitle").textContent = s.set.t;
+  $("final").textContent = `${points(s.score)} из ${max}`;
+  $("hits").textContent = `Сам поставил: ${s.own} из ${s.total}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.set.id)}`;
+  show("over");
+  const view = drawBoard($("board2"), s.data);
+  s.data.p.forEach((p, i) => place(view, s.data, p, i));
+  errorList(new Map([...s.miss].map(([n, k]) => [n, `${n} — ошибок: ${k}`])));
+  claimXP("c", s.own);
+  $("again").onclick = () => start(s.set);
+}
+
+// Увеличение: карта шире окна, её прокручивают пальцем; кусочек под пальцем — в том же масштабе
+function zoom(step) {
+  if (!state) return;
+  const z = Math.min(4, Math.max(1, state.zoom + step)), box = $("board");
+  const cx = (box.scrollLeft + box.clientWidth / 2) / box.scrollWidth, cy = (box.scrollTop + box.clientHeight / 2) / box.scrollHeight;
+  state.zoom = z;
+  state.view.svg.style.width = `${z * 100}%`;
+  box.scrollLeft = cx * box.scrollWidth - box.clientWidth / 2;
+  box.scrollTop = cy * box.scrollHeight - box.clientHeight / 2;
+  $("zout").disabled = z <= 1; $("zin").disabled = z >= 4;
+}
+
+function skip() {
+  if (!state || state.queue.length < 2) return;
+  state.queue.push(state.queue.shift());
+  $("hint").textContent = ""; nextPiece();
+}
+
+function home() {
+  state = null;
+  const list = subject === "geo" ? SETS.filter(x => fits(x.m)) : [];
+  $("none").hidden = list.length > 0;
+  $("sets").replaceChildren(...list.map(x => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.innerHTML = "<span></span><small></small>";
+    b.firstChild.textContent = x.t;
+    b.lastChild.textContent = `кусочков: ${x.n}` + (best.get(x.id) ? ` · рекорд ${best.get(x.id)}` : "");
+    b.addEventListener("click", () => start(x));
+    return b;
+  }));
+  show("home");
+}
+
+$("handle").addEventListener("pointerdown", down);
+$("handle").addEventListener("pointermove", move);
+$("handle").addEventListener("pointerup", up);
+$("handle").addEventListener("pointercancel", e => { if (drag) { drag.f.remove(); drag = null; } });
+$("skip").addEventListener("click", skip);
+$("zin").addEventListener("click", () => zoom(1));
+$("zout").addEventListener("click", () => zoom(-1));
+$("quit").addEventListener("click", () => state ? finish() : home());
+$("menu").addEventListener("click", home);
+const idx = document.createElement("script");
+idx.src = "data/puzzle/index.js?v=1";
+idx.onload = () => {
+  SETS = window.PUZZLE_SETS || [];
+  $("subj").textContent = `География · ${MODE_TITLE}`;
+  home();
+};
+idx.onerror = () => { $("none").hidden = false; $("none").textContent = "Не удалось загрузить пазлы. Проверь интернет и открой игру ещё раз."; };
+document.head.append(idx);
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: найди слова с ошибками, как корректор.">
+<title>Исправь ошибки</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.page { display: flex; flex-wrap: wrap; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+  user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.w { border: 1px solid var(--line); color: var(--ink); background: var(--bg); padding: 9px 12px; border-radius: 10px; font-weight: 600; }
+.w.mark { border-color: var(--hit); color: var(--hit); text-decoration: line-through wavy; }
+.w.found { border-color: var(--good); background: var(--good-bg); color: var(--ink); text-decoration: none; }
+.w.missed { border-color: var(--hit); background: var(--hit-bg); }
+.w.false { border-style: dashed; border-color: var(--muted); text-decoration: none; color: var(--muted); }
+.fix { font-weight: 400; color: var(--good); margin-left: 4px; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>✏️ Исправь ошибки</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Ты — корректор. На странице 12 слов, в некоторых ошибки. Нажми на слова с ошибкой (ещё раз — снять отметку) и проверь. Нашёл ошибку — 10 очков, отметил верное слово — минус 5. Страниц пять.</p>
+  </header>
+  <section class="sheet">
+    <div class="choices" id="kinds"></div>
+    <p class="note" id="none" hidden>Для этого класса слов пока нет.</p>
+  </section>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="round"></span><span id="score"></span></div>
+  </div>
+  <div class="task"><span id="left"></span><b>Найди слова с ошибками</b></div>
+  <div class="page" id="page"></div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+  <div class="row"><button class="main" id="check">Проверить</button></div>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Корректура сдана</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="hits"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Пропущенные ошибки</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за найденные ошибки и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Слова — из упражнений бота «Какая буква?» (app/game_data.py, proof): r — верно, w — с ошибкой, n — правило.
+const PAGES = 5, WORDS = 12, FOUND = 10, FALSE = 5;
+const best = records("proof");
+let WORDS_ALL = [], state = null;
+
+function start() {
+  state = {pool: shuffle(WORDS_ALL), n: 0, score: 0, found: 0, total: 0, errors: new Map()};
+  show("game");
+  deal();
+}
+
+function deal() {
+  const s = state;
+  if (s.pool.length < WORDS) s.pool = shuffle(WORDS_ALL);
+  const words = s.pool.splice(0, WORDS), bad = 2 + Math.floor(Math.random() * 3);  // 2–4 ошибки на странице
+  s.items = words.map((w, i) => ({...w, wrong: i < bad, marked: false}));
+  s.items = shuffle(s.items);
+  s.checked = false;
+  $("round").textContent = `${s.n + 1}/${PAGES}`;
+  $("score").textContent = points(s.score);
+  $("left").textContent = "";
+  $("hint").textContent = ""; $("hint").className = "hint";
+  $("check").textContent = "Проверить";
+  $("page").replaceChildren(...s.items.map(it => {
+    const b = document.createElement("button");
+    b.className = "w"; b.textContent = it.wrong ? it.w : it.r;
+    b.addEventListener("click", () => { if (s.checked) return; it.marked = !it.marked; b.classList.toggle("mark", it.marked); });
+    it.el = b;
+    return b;
+  }));
+}
+
+function check() {
+  const s = state;
+  if (s.checked) return next();
+  s.checked = true;
+  let found = 0, missed = 0, fals = 0;
+  for (const it of s.items) {
+    if (it.wrong && it.marked) { found++; it.el.className = "w found"; it.el.innerHTML = ""; it.el.append(it.w, Object.assign(document.createElement("span"), {className: "fix", textContent: "→ " + it.r})); }
+    else if (it.wrong) { missed++; it.el.className = "w missed"; it.el.append(Object.assign(document.createElement("span"), {className: "fix", textContent: "→ " + it.r})); s.errors.set(it.r, `${it.r} (не «${it.w}»). ${it.n}`); }
+    else if (it.marked) { fals++; it.el.className = "w false"; }
+  }
+  const got = found * FOUND - fals * FALSE;
+  s.score = Math.max(0, s.score + got); s.found += found; s.total += found + missed;
+  $("score").textContent = points(s.score);
+  $("hint").textContent = `Найдено ${found} из ${found + missed}` + (fals ? `, лишних отметок: ${fals} (там всё верно)` : "") + (missed ? ". Пропущенные исправлены зелёным." : ". Отлично!");
+  $("hint").className = missed || fals ? "hint" : "hint ok";
+  $("check").textContent = s.n + 1 < PAGES ? "Следующая страница ▶️" : "Итоги";
+}
+
+function next() {
+  state.n++;
+  if (state.n >= PAGES) finish(); else deal();
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const record = best.save("all", s.score);
+  $("final").textContent = points(s.score);
+  $("hits").textContent = `Найдено ошибок: ${s.found} из ${s.total}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get("all")}`;
+  errorList(s.errors);
+  claimXP("p", s.found);
+  $("again").onclick = start;
+  show("over");
+}
+
+function home() {
+  state = null;
+  $("none").hidden = WORDS_ALL.length >= WORDS;
+  const b = document.createElement("button");
+  b.className = "choice";
+  b.innerHTML = `<span>✏️ Начать корректуру</span><small>${best.get("all") ? "рекорд " + best.get("all") : "ещё не играл"}</small>`;
+  b.addEventListener("click", start);
+  $("kinds").replaceChildren(...(WORDS_ALL.length >= WORDS ? [b] : []));
+  show("home");
+}
+
+$("check").addEventListener("click", check);
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+loadData(data => {
+  $("subj").textContent = `${data.title} · ${MODE_TITLE}`;
+  WORDS_ALL = (data.proof || []).filter(w => fits(w.m));
+  home();
+}, () => { $("none").hidden = false; $("none").textContent = "Не удалось загрузить слова. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

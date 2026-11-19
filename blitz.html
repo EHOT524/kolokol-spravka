@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: как можно больше верных ответов за минуту.">
+<title>Блиц</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: left; }
+.bar i.low { background: var(--hit); }
+.q { white-space: pre-line; font-size: 18px; font-weight: 650; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; min-height: 72px; display: grid; gap: 10px; align-content: center; }
+.q img { max-width: 160px; max-height: 110px; border: 1px solid var(--line); border-radius: 4px; justify-self: center;
+  background: #fff; }  /* белые полосы флагов прозрачные: в тёмной теме без фона они пропадают */
+.q svg { width: 100%; max-width: 420px; justify-self: center; }
+.opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.opts.two { grid-template-columns: 1fr 1fr; }
+.opts button { border-color: var(--line); color: var(--ink); overflow-wrap: anywhere; min-height: 52px; }
+.opts button.ok { border-color: var(--good); background: var(--good-bg); }
+.opts button.bad { border-color: var(--hit); background: var(--hit-bg); }
+.streak { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>⚡ Блиц</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Отвечай как можно быстрее: на всё минута (на длинные задания — полторы). Верный ответ — очко, пять подряд — бонус. Ошибка отнимает 5 секунд и показывает, как правильно.</p>
+  </header>
+  <section class="sheet">
+    <h2>Режим</h2>
+    <div class="choices" id="kinds"></div>
+    <p class="note" id="none" hidden>Для этого класса заданий блица пока нет.</p>
+  </section>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="score"></span><span class="streak" id="streak"></span><span id="clock"></span></div>
+  </div>
+  <div class="bar"><i id="time"></i></div>
+  <div class="task"><span id="mode"></span></div>
+  <div class="q" id="q"></div>
+  <div class="opts" id="opts"></div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Время вышло</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="hits"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Где ошибся</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за верные ответы и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Задания — из данных бота (app/game_data.py, blitz): q — вопрос, o — варианты, a — ответ, e — пояснение,
+// img — картинка (флаг), chart — климатограмма {t: 12 температур, p: 12 сумм осадков}, fixed — не перемешивать варианты.
+const SECONDS = 60, LONG = 90, LONG_MODES = ["law", "earlier", "climate", "lines"], PENALTY = 5, BONUS_EVERY = 5;
+const best = records("blitz");
+let MODES = {}, TITLES = {}, state = null, timer = 0;
+
+function chart(c) {  // климатограмма: столбики осадков и линия температуры
+  const W = 320, H = 170, L = 30, R = 30, T = 10, B = 22, w = (W - L - R) / 12;
+  const tMin = Math.min(-10, ...c.t), tMax = Math.max(30, ...c.t), pMax = Math.max(100, ...c.p);
+  const ty = v => T + (tMax - v) / (tMax - tMin) * (H - T - B), py = v => H - B - v / pMax * (H - T - B);
+  const bars = c.p.map((v, i) => `<rect x="${L + i * w + 3}" y="${py(v)}" width="${w - 6}" height="${H - B - py(v)}" fill="#5b8fd6" opacity=".75"/>`).join("");
+  const line = c.t.map((v, i) => `${L + i * w + w / 2},${ty(v)}`).join(" ");
+  const months = "ЯФМАМИИАСОНД".split("").map((m, i) => `<text x="${L + i * w + w / 2}" y="${H - 6}" text-anchor="middle">${m}</text>`).join("");
+  const zero = tMin < 0 ? `<line x1="${L}" x2="${W - R}" y1="${ty(0)}" y2="${ty(0)}" stroke="currentColor" stroke-dasharray="3 3" opacity=".5"/>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" font-size="10" fill="currentColor" role="img" aria-label="Климатограмма">
+    ${bars}${zero}<polyline points="${line}" fill="none" stroke="#d64b3b" stroke-width="2.5"/>${months}
+    <text x="2" y="${ty(tMax) + 4}">${tMax}°</text><text x="2" y="${ty(tMin)}">${tMin}°</text>
+    <text x="${W - 2}" y="${py(pMax) + 8}" text-anchor="end">${pMax} мм</text></svg>
+    <small style="font-size:12px;font-weight:400;color:var(--muted)">Красная линия — температура, синие столбики — осадки по месяцам</small>`;
+}
+
+function start(mode) {
+  const seconds = LONG_MODES.includes(mode) ? LONG : SECONDS;
+  state = {mode, list: shuffle(MODES[mode]), n: 0, score: 0, right: 0, run: 0, seconds, left: seconds, errors: new Map(), lock: false};
+  $("mode").textContent = TITLES[mode];
+  show("game");
+  ask();
+  clearInterval(timer);
+  timer = setInterval(tick, 100);
+}
+
+function tick() {
+  const s = state;
+  if (!s) return clearInterval(timer);
+  s.left -= 0.1;
+  $("time").style.transform = `scaleX(${Math.max(0, s.left / s.seconds)})`;
+  $("time").className = s.left < 10 ? "low" : "";
+  $("clock").textContent = `⏱ ${Math.max(0, Math.ceil(s.left))}`;
+  if (s.left <= 0) finish();
+}
+
+function ask() {
+  const s = state;
+  if (s.n >= s.list.length) { s.list = shuffle(s.list); s.n = 0; }
+  const r = s.r = s.list[s.n++];
+  const box = $("q");
+  box.textContent = r.q;
+  if (r.img) { const img = document.createElement("img"); img.src = r.img; img.alt = "Флаг"; box.append(img); }
+  if (r.chart) box.insertAdjacentHTML("beforeend", chart(r.chart));
+  const opts = r.fixed ? r.o : shuffle(r.o);
+  $("opts").className = "opts" + (opts.length === 2 ? " two" : "");
+  $("opts").replaceChildren(...opts.map(o => {
+    const b = document.createElement("button");
+    b.textContent = o;
+    b.addEventListener("click", () => choose(b, o));
+    return b;
+  }));
+  $("score").textContent = points(s.score);
+  $("streak").textContent = s.run >= 2 ? `🔥 ${s.run}` : "";
+  s.lock = false;
+}
+
+function choose(btn, o) {
+  const s = state;
+  if (!s || s.lock) return;
+  s.lock = true;
+  if (o === s.r.a) {
+    s.right++; s.run++;
+    s.score += 1 + (s.run % BONUS_EVERY === 0 ? 2 : 0);
+    btn.classList.add("ok");
+    $("hint").textContent = s.run % BONUS_EVERY === 0 ? `🔥 ${s.run} подряд: +2 бонуса!` : "";
+    $("hint").className = "hint ok";
+    setTimeout(() => state && ask(), 250);
+    return;
+  }
+  s.run = 0;
+  s.left -= PENALTY;
+  btn.classList.add("bad");
+  $("opts").querySelectorAll("button").forEach(b => { if (b.textContent === s.r.a) b.classList.add("ok"); });
+  $("hint").textContent = `−${PENALTY} с. ${s.r.e}`;
+  $("hint").className = "hint";
+  s.errors.set(s.r.q + s.r.a, `${s.r.q.replace(/\n/g, " ")} → ${s.r.a}`);
+  setTimeout(() => { if (state) { $("hint").textContent = ""; ask(); } }, 1800);
+}
+
+function finish() {
+  const s = state;
+  if (!s) return;
+  state = null;
+  clearInterval(timer);
+  const record = best.save(s.mode, s.score);
+  $("final").textContent = points(s.score);
+  $("hits").textContent = `Верных ответов: ${s.right}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.mode)}`;
+  errorList(s.errors);
+  claimXP("z", s.right);
+  $("again").onclick = () => start(s.mode);
+  show("over");
+}
+
+function home() {
+  state = null;
+  clearInterval(timer);
+  const ids = Object.keys(MODES);
+  $("none").hidden = ids.length > 0;
+  $("kinds").replaceChildren(...ids.map(id => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.innerHTML = `<span></span><small>${best.get(id) ? "рекорд " + best.get(id) : "ещё не играл"}</small>`;
+    b.firstChild.textContent = TITLES[id] || id;
+    b.addEventListener("click", () => start(id));
+    return b;
+  }));
+  show("home");
+}
+
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+loadData(data => {
+  $("subj").textContent = `${data.title} · ${MODE_TITLE}`;
+  TITLES = data.kinds.blitz || {};
+  for (const [id, list] of Object.entries(data.blitz || {})) {
+    const mine = list.filter(r => fits(r.m));
+    if (mine.length >= 4) MODES[id] = mine;
+  }
+  home();
+}, () => { $("none").hidden = false; $("none").textContent = "Не удалось загрузить задания. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

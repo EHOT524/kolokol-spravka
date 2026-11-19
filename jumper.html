@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: прыгай на платформу с верным ответом и поднимайся выше.">
+<title>Прыгун</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍎</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.task b { font-size: 16px; font-weight: 600; }
+.task b.short { font-size: 19px; }
+.bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: left; }
+.bar i.low { background: var(--hit); }
+.field { position: relative; height: min(62vh, 620px); min-height: 440px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px;
+  background: linear-gradient(var(--sky1), var(--sky2)); touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent; }
+.plat { position: absolute; left: 0; top: 0; display: grid; place-items: center; text-align: center; min-height: 46px; padding: 8px 10px;
+  background: var(--plat); border: 1px solid var(--plat-edge); border-bottom-width: 5px; border-radius: 10px; color: var(--ink);
+  font: 600 15px/1.25 system-ui, sans-serif; cursor: pointer; will-change: transform; overflow-wrap: anywhere; }
+.plat.base { cursor: default; color: var(--muted); font-weight: 500; font-size: 13px; }
+.plat.ok { border-color: var(--good); background: var(--good-bg); }
+.plat.bad { border-color: var(--hit); background: var(--hit-bg); }
+.plat.gone { opacity: 0; transition: opacity .3s; pointer-events: none; }
+.hero { position: absolute; left: 0; top: 0; width: 40px; height: 40px; font-size: 32px; line-height: 40px; text-align: center;
+  pointer-events: none; will-change: transform; z-index: 2; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>🍎 Прыгун</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Сверху вопрос, на платформах ответы. Нажми на платформу с верным ответом — яблоко прыгнет выше. Чем быстрее ответишь, тем больше очков. Ошибся или не успел — минус жизнь, жизней три.</p>
+  </header>
+  <section class="sheet">
+    <h2>Что спрашивать</h2>
+    <div class="choices" id="kinds"></div>
+    <p class="note" id="empty" hidden>Для этого класса вопросов пока нет.</p>
+  </section>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="height"></span><span id="score">0</span><span class="lives" id="lives"></span></div>
+  </div>
+  <div class="task"><span id="label"></span><b id="ask"></b><div class="bar"><i id="time"></i></div></div>
+  <div class="field" id="field"><div class="hero" id="hero">🍎</div></div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Игра окончена</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="climb"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Где ошибся</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за верные ответы и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Вопросы — из уроков бота (app/game_data.py): тот же вопрос, верный ответ и неверные варианты из той же темы.
+const LIVES = 3, HERO = 40;
+const best = records("jumper");
+const field = $("field"), hero = $("hero");
+let BANK = {}, KINDS = {}, state = null, raf = 0;
+
+function prepare(data) {
+  KINDS = data.kinds.jumper;
+  BANK = {};
+  for (const q of data.jumper) if (fits(q.m)) (BANK[q.k] = BANK[q.k] || []).push(q);
+  for (const k of Object.keys(BANK)) if (BANK[k].length < 5) delete BANK[k];
+}
+
+function question() {
+  const s = state, kinds = s.kind === "all" ? Object.keys(BANK) : [s.kind];
+  for (let tries = 0; tries < 60; tries++) {
+    const list = BANK[pick(kinds)], i = Math.floor(Math.random() * list.length), q = list[i];
+    if (s.used.has(q)) continue;
+    s.used.add(q);
+    return q;
+  }
+  s.used.clear();  // всё спросили — идём по второму кругу
+  return question();
+}
+
+// Все движения идут через animate: шаг получает долю пути от 0 до 1
+let animate = (ms, step) => new Promise(done => {
+  const from = performance.now(), game = state;
+  const tick = now => {
+    if (state !== game) return;  // игру закрыли посреди прыжка
+    const t = Math.min(1, (now - from) / ms);
+    step(t);
+    t < 1 ? requestAnimationFrame(tick) : done();
+  };
+  requestAnimationFrame(tick);
+});
+const wait = ms => animate(ms, () => {});
+const put = (el, x, y) => { el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`; };
+const stand = p => [p.x + p.w / 2 - HERO / 2, p.y - HERO + 4];
+
+function platform(text, x, y, w, cls = "") {
+  const el = document.createElement("div");
+  el.className = "plat " + cls;
+  el.textContent = text;
+  el.style.width = w + "px";
+  field.append(el);
+  const p = {el, x, y, w};
+  put(el, x, y);
+  return p;
+}
+
+function hud() {
+  const s = state;
+  $("score").textContent = `★ ${s.score}`;
+  $("height").textContent = `↑ ${s.height}`;
+  $("lives").textContent = "❤️".repeat(s.lives) + "🤍".repeat(LIVES - s.lives);
+}
+
+function ask() {
+  const s = state, q = s.q = question(), W = field.clientWidth, w = Math.min(Math.round(W * 0.68), 340);
+  const wrong = shuffle(q.w).slice(0, 2);
+  $("label").textContent = q.l || KINDS[q.k];
+  $("ask").textContent = q.q;
+  $("ask").className = q.q.length < 40 ? "short" : "";
+  // платформы лесенкой: по очереди слева и справа, чтобы длинный ответ поместился целиком
+  const side = Math.random() < 0.5 ? 0 : 1;
+  s.plats = shuffle([q.a, ...wrong]).map((text, k) => {
+    const p = platform(text, (k + side) % 2 ? W - w - 6 : 6, 0, w);
+    p.right = text === q.a;
+    p.el.addEventListener("pointerdown", e => { e.preventDefault(); choose(p); });
+    return p;
+  });
+  // ставим снизу вверх по настоящей высоте: между платформами поровну свободного места
+  const heights = s.plats.map(p => p.el.offsetHeight), free = s.base.y - 6 - heights.reduce((a, b) => a + b, 0);
+  const gap = Math.max(8, free / s.plats.length);
+  let top = s.base.y;
+  s.plats.forEach((p, k) => { p.y = Math.max(2, top - gap - heights[k]); top = p.y; put(p.el, p.x, p.y); });
+  const reading = q.q.length + [q.a, ...wrong].join("").length * 0.6;
+  s.limit = Math.max(0.55, 1 - s.height * 0.025) * (8 + reading / 12) * 1000;  // длинный вопрос дольше читать, выше — быстрее
+  s.left = s.limit;
+  s.busy = false;
+  hud();
+}
+
+function jump(to, ms = 430) {
+  const s = state, [x0, y0] = s.pos, [x1, y1] = to, lift = 46 + Math.abs(y1 - y0) * 0.15;
+  return animate(ms, t => { s.pos = [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t - 4 * lift * t * (1 - t)]; put(hero, ...s.pos); });
+}
+
+async function choose(p) {
+  const s = state;
+  if (!s || s.busy) return;
+  s.busy = true;
+  await jump(stand(p));
+  if (state !== s) return;
+  if (p.right) {
+    const bonus = Math.ceil(s.left / 1000);
+    s.height++; s.score += 10 + bonus;
+    p.el.classList.add("ok");
+    if (performance.now() > s.hintUntil) { $("hint").className = "hint ok"; $("hint").textContent = `+${10 + bonus}: 10 за ответ и ${bonus} за скорость`; }
+    hud();
+    await climb(p);
+  } else {
+    p.el.classList.add("bad");
+    await lose(p);
+  }
+}
+
+// Верный ответ: вся картинка съезжает вниз, платформа с ответом становится новой опорой
+async function climb(p) {
+  const s = state, dy = s.base.y - p.y, all = [s.base, ...s.plats], y0 = all.map(a => a.y), hy = s.pos[1];
+  s.plats.filter(a => a !== p).forEach(a => a.el.classList.add("gone"));
+  await animate(380, t => { all.forEach((a, k) => { a.y = y0[k] + dy * t; put(a.el, a.x, a.y); }); s.pos[1] = hy + dy * t; put(hero, ...s.pos); });
+  if (state !== s) return;
+  all.filter(a => a !== p).forEach(a => a.el.remove());
+  p.el.className = "plat base";
+  s.base = p;
+  ask();
+}
+
+// Ошибка или вышло время: верная платформа подсвечивается, яблоко возвращается на опору
+async function lose(p) {
+  const s = state, q = s.q;
+  s.lives--;
+  s.errors.set(q, `${q.q.length > 120 ? q.q.slice(0, 117) + "…" : q.q}\nВерно: ${q.a}`);
+  s.plats.find(a => a.right).el.classList.add("ok");
+  $("hint").className = "hint";
+  $("hint").textContent = (p ? "Неверно. " : "Время вышло. ") + "Верный ответ: " + q.a;
+  s.hintUntil = performance.now() + 3500;
+  try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+  hud();
+  if (p) {
+    const y0 = p.y;
+    await Promise.all([jump(stand(s.base), 520), animate(520, t => { p.y = y0 + 260 * t * t; put(p.el, p.x, p.y); p.el.style.opacity = 1 - t; })]);
+  }
+  await wait(1700);
+  if (state !== s) return;
+  s.plats.forEach(a => a.el.remove());
+  if (s.lives <= 0) return finish();
+  ask();
+}
+
+function clock(now) {
+  const s = state;
+  if (!s) return;
+  raf = requestAnimationFrame(clock);
+  const dt = Math.min(100, now - s.last);  // свёрнутая вкладка время не съедает
+  s.last = now;
+  if (s.busy) return;
+  s.left -= dt;
+  const share = Math.max(0, s.left / s.limit);
+  $("time").style.transform = `scaleX(${share})`;
+  $("time").className = share < 0.3 ? "low" : "";
+  if (s.left <= 0) { s.busy = true; lose(null); }
+}
+
+function start(kind) {
+  stop();
+  show("game");
+  const W = field.clientWidth, H = field.clientHeight, w = Math.min(Math.round(W * 0.68), 340);
+  state = {kind, score: 0, lives: LIVES, height: 0, used: new Set(), errors: new Map(), plats: [], busy: true, last: performance.now(), hintUntil: 0, left: 1, limit: 1};
+  state.base = platform("старт", (W - w) / 2, H - 58, w, "base");
+  state.pos = stand(state.base);
+  put(hero, ...state.pos);
+  $("hint").textContent = "";
+  ask();
+  raf = requestAnimationFrame(clock);
+}
+
+function stop() {
+  cancelAnimationFrame(raf);
+  state = null;
+  field.querySelectorAll(".plat").forEach(el => el.remove());
+}
+
+function finish() {
+  const s = state;
+  stop();
+  const record = best.save(s.kind, s.score);
+  $("final").textContent = points(s.score);
+  $("climb").textContent = `Поднялся на ${s.height} ${plural(s.height, "платформу", "платформы", "платформ")}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.kind)}`;
+  errorList(s.errors);
+  claimXP("j", s.height);
+  $("again").onclick = () => start(s.kind);
+  show("over");
+}
+
+function home() {
+  stop();
+  const kinds = [...(Object.keys(BANK).length > 1 ? [["all", "🎲 Всё подряд"]] : []), ...Object.keys(BANK).map(k => [k, KINDS[k] || k])];
+  $("empty").hidden = kinds.length > 0;
+  $("kinds").replaceChildren(...kinds.map(([id, title]) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.innerHTML = `<span></span><small>${best.get(id) ? "рекорд " + best.get(id) : "ещё не играл"}</small>`;
+    b.firstChild.textContent = title;
+    b.addEventListener("click", () => start(id));
+    return b;
+  }));
+  show("home");
+}
+
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+loadData(data => { $("subj").textContent = `${data.title} · ${MODE_TITLE}`; prepare(data); home(); },
+  () => { $("empty").hidden = false; $("empty").textContent = "Не получилось загрузить вопросы. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

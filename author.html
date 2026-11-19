@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: пересказ произведения с пропусками — выбери, что было дальше, и сравни свою версию с авторской.">
+<title>Почувствуй себя автором</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✍️</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.story { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 17px; line-height: 1.6;
+  overflow-wrap: anywhere; }
+.story .gap { display: inline-block; min-width: 72px; border-bottom: 2px dashed var(--accent); color: var(--accent); text-align: center;
+  font-weight: 700; animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .4; } }
+.story mark, .version mark { background: var(--good-bg); color: var(--good); font-weight: 650; border-radius: 4px; padding: 0 3px; }
+.story mark.bad, .version mark.bad { background: var(--hit-bg); color: var(--hit); }
+.story mark.fun, .version mark.fun { background: var(--b5); color: var(--ink); }
+.story s { color: var(--muted); }
+.opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.opts button { border-color: var(--line); color: var(--ink); text-align: left; overflow-wrap: anywhere; font-weight: 600; }
+.opts button.ok { border-color: var(--good); background: var(--good-bg); opacity: 1; }
+.opts button.bad { border-color: var(--hit); background: var(--hit-bg); opacity: 1; }
+.version { line-height: 1.6; overflow-wrap: anywhere; }
+.legend { color: var(--muted); font-size: 13px; }
+.byline { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>✍️ Почувствуй себя автором</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Перед тобой краткий пересказ произведения, но на самых важных поворотах сюжета слова пропущены. Выбери, что было дальше: один вариант — как у автора, остальные — нет, а некоторые совсем нелепые. В конце сравни свою версию с авторской.</p>
+  </header>
+  <section class="sheet">
+    <h2>Какое произведение</h2>
+    <div class="choices" id="books"></div>
+    <p class="note" id="none" hidden>Для этого класса пересказов пока нет.</p>
+  </section>
+  <p class="note">Это пересказ, а не текст произведения.</p>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="step"></span><span id="score"></span></div>
+  </div>
+  <div class="task"><span id="author"></span><b id="title"></b></div>
+  <div class="story" id="story" aria-live="polite"></div>
+  <div class="opts" id="opts"></div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+  <button class="main" id="next" hidden>Дальше ▶️</button>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1 id="otitle"></h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="verdict"></p>
+  </section>
+  <section class="sheet">
+    <h2>📖 Как у автора</h2>
+    <p class="version" id="real"></p>
+  </section>
+  <section class="sheet" id="minebox">
+    <h2>✍️ Твоя версия</h2>
+    <p class="version" id="mine"></p>
+    <p class="legend">Зелёным — как у автора, красным — по-другому, сиреневым — совсем по-своему 😄</p>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за верно заполненные пропуски и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Другое произведение ▶️</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Пересказы — из данных бота (app/game_data.py, author; тексты — app/content/literature/author_game.py): t — название, au — автор,
+// p — части: строка — текст, список — пропуск (первый вариант верный, последний — нарочно нелепый). Опыт — буква a в app/games.py.
+const best = records("author");
+let ALL = [], state = null, played = new Set();
+
+const gaps = b => b.p.filter(x => Array.isArray(x)).length;
+const esc = t => t.replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+function start(book) {
+  played.add(book.t);
+  state = {b: book, picks: [], gap: 0, score: 0, total: gaps(book), done: false};
+  $("title").textContent = `«${book.t}»`;
+  $("author").textContent = book.au;
+  show("game");
+  ask();
+}
+
+// Текст до текущего пропуска: заполненные пропуски подсвечены, текущий — «_____»
+function render() {
+  const s = state;
+  let html = "", k = 0;
+  for (const part of s.b.p) {
+    if (!Array.isArray(part)) { html += esc(part); continue; }
+    if (k < s.picks.length) html += mark(part, s.picks[k], true);
+    else if (k === s.picks.length && !s.done) { html += '<span class="gap">…</span>'; break; }
+    else break;
+    k++;
+  }
+  $("story").innerHTML = html;
+}
+
+function mark(opts, pick, showRight) {
+  if (pick === 0) return `<mark>${esc(opts[0])}</mark>`;
+  const cls = pick === opts.length - 1 ? "fun" : "bad";
+  return showRight ? `<mark class="${cls}"><s>${esc(opts[pick])}</s></mark> <mark>${esc(opts[0])}</mark>` : `<mark class="${cls}">${esc(opts[pick])}</mark>`;
+}
+
+function current() { return state.b.p.filter(x => Array.isArray(x))[state.gap]; }
+
+function ask() {
+  const s = state, opts = current();
+  s.answered = false;
+  $("step").textContent = `${s.gap + 1}/${s.total}`;
+  $("score").textContent = `✅ ${s.score}`;
+  $("hint").textContent = ""; $("hint").className = "hint";
+  $("next").hidden = true;
+  render();
+  $("opts").replaceChildren(...shuffle(opts.map((t, i) => [t, i])).map(([t, i]) => {
+    const b = document.createElement("button");
+    b.textContent = t;
+    b.dataset.i = i;
+    b.addEventListener("click", () => choose(i));
+    return b;
+  }));
+}
+
+function choose(i) {
+  const s = state;
+  if (!s || s.answered) return;
+  s.answered = true;
+  const opts = current();
+  s.picks.push(i);
+  if (i === 0) s.score++;
+  $("opts").querySelectorAll("button").forEach(b => {
+    b.disabled = true;
+    if (+b.dataset.i === 0) b.classList.add("ok");
+    else if (+b.dataset.i === i) b.classList.add("bad");
+  });
+  $("hint").textContent = i === 0 ? "✅ Как у автора!" : i === opts.length - 1 ? `😄 Смело! Но у автора: ${opts[0]}` : `❌ У автора: ${opts[0]}`;
+  $("hint").className = i === 0 ? "hint ok" : "hint";
+  $("score").textContent = `✅ ${s.score}`;
+  s.gap++;
+  render();
+  $("next").textContent = s.gap >= s.total ? "Сравнить версии 📖" : "Дальше ▶️";
+  $("next").hidden = false;
+  $("next").focus({preventScroll: true});
+}
+
+function next() {
+  if (state.gap >= state.total) finish(); else ask();
+}
+
+function version(book, picks) {
+  let html = "", k = 0;
+  for (const part of book.p) {
+    if (!Array.isArray(part)) { html += esc(part); continue; }
+    const pick = picks ? picks[k] : 0;
+    html += pick === undefined ? `<mark class="bad">…</mark>` : picks ? mark(part, pick, false) : `<mark>${esc(part[0])}</mark>`;
+    k++;
+  }
+  return html;
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const record = best.save(s.b.t, s.score);
+  $("otitle").textContent = `«${s.b.t}»`;
+  $("final").textContent = `${s.score} из ${s.total}`;
+  $("verdict").textContent = s.score === s.total ? "🏆 Ты пишешь точь-в-точь как автор!" :
+    s.score >= s.total / 2 ? "Почти как у автора. Сравни версии ниже." : "Получилась совсем другая история! Сравни с авторской.";
+  if (record && s.score && s.score < s.total) $("verdict").textContent += " Новый рекорд!";
+  $("real").innerHTML = version(s.b, null);
+  $("mine").innerHTML = version(s.b, s.picks);
+  $("minebox").hidden = s.score === s.total;
+  claimXP("a", s.score);
+  show("over");
+}
+
+function randomBook(exceptTitle) {
+  let pool = ALL.filter(b => !played.has(b.t));
+  if (!pool.length) { played = new Set(); pool = ALL; }
+  const rest = pool.filter(b => b.t !== exceptTitle);
+  return pick(rest.length ? rest : pool);
+}
+
+function home() {
+  state = null;
+  $("none").hidden = ALL.length > 0;
+  const random = [{t: "🎲 Случайное", random: true}];
+  $("books").replaceChildren(...(ALL.length ? random : []).concat(ALL).map(b => {
+    const btn = document.createElement("button");
+    btn.className = "choice";
+    const score = b.random ? 0 : best.get(b.t);
+    btn.innerHTML = `<span></span><small></small>`;
+    btn.firstChild.textContent = b.random ? b.t : `«${b.t}»`;
+    btn.lastChild.textContent = b.random ? `пересказов: ${ALL.length}` : b.au + (score ? ` · лучший ${score} из ${gaps(b)}` : "");
+    btn.addEventListener("click", () => start(b.random ? randomBook() : b));
+    return btn;
+  }));
+  show("home");
+}
+
+$("next").addEventListener("click", next);
+$("quit").addEventListener("click", () => {  // «Закончить»: итоги по заполненным пропускам и опыт в бота
+  if (state && state.picks.length) finish(); else home();
+});
+$("menu").addEventListener("click", home);
+$("again").addEventListener("click", () => start(randomBook($("otitle").textContent.slice(1, -1))));
+loadData(data => {
+  $("subj").textContent = `${data.title} · ${MODE_TITLE}`;
+  ALL = (data.author || []).filter(b => fits(b.m));
+  home();
+}, () => { $("none").hidden = false; $("none").textContent = "Не удалось загрузить пересказы. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

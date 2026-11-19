@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: угадай деятеля, героя книги, страну или организм по подсказкам.">
+<title>Кто я?</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕵️</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.clues { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: c; }
+.clues li { counter-increment: c; display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; animation: pop .25s ease-out; }
+.clues li::before { content: counter(c); width: 24px; height: 24px; border-radius: 50%; background: var(--chip); color: var(--muted);
+  font-size: 13px; font-weight: 700; display: grid; place-items: center; }
+.clues img { width: 100%; max-height: 260px; object-fit: contain; border-radius: 8px; background: #fff; }
+.clues small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+@keyframes pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.opts button { border-color: var(--line); color: var(--ink); text-align: left; overflow-wrap: anywhere; }
+.opts button.ok { border-color: var(--good); background: var(--good-bg); opacity: 1; }
+.opts button.bad { border-color: var(--hit); background: var(--hit-bg); }
+.worth { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>🕵️ Кто я?</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Игра загадывает деятеля, героя книги, страну или организм и даёт подсказки по одной — от самой общей к точной. Угадал по первой подсказке — 100 очков, каждая следующая стоит дешевле. Ошибся — откроется следующая подсказка. Раундов десять.</p>
+  </header>
+  <section class="sheet">
+    <h2>Кого угадываем</h2>
+    <div class="choices" id="kinds"></div>
+    <p class="note" id="none" hidden>Для этого класса загадок пока нет.</p>
+  </section>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="round"></span><span id="score"></span></div>
+  </div>
+  <div class="task"><span id="kind"></span><b>Кто я?</b></div>
+  <ol class="clues" id="clues"></ol>
+  <p class="worth" id="worth"></p>
+  <div class="opts" id="opts"></div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+  <div class="row"><button id="more">💡 Ещё подсказка</button><button class="main" id="next" hidden>Дальше ▶️</button></div>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Загадки кончились</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="hits"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Кого не угадал</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за угаданные загадки и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Загадки — из данных бота (app/game_data.py, whoami): a — ответ, h — подсказки, k — вид (варианты того же вида), f — женское имя,
+// img — фото организма (последняя подсказка). Опыт: угаданные загадки (буква q в app/games.py).
+const ROUNDS = 10, OPTIONS = 6, STEP = 25, FLOOR = 10;
+const NAMES = {p: "👤 Деятели", h: "🎭 Герои книг", "lстрана": "🌍 Страны", "lгород": "🏙 Города", "lрегион": "🗺 Регионы",
+               oplants: "🌿 Растения", oanimals: "🐾 Животные"};
+const best = records("whoami");
+let ALL = [], state = null;
+
+const clues = r => r.h.length + (r.img ? 1 : 0);
+const worth = n => Math.max(FLOOR, 100 - STEP * (n - 1));
+
+function options(r) {
+  const same = ALL.filter(x => x.k === r.k && x.a !== r.a && (r.f === undefined || x.f === r.f));
+  const pool = same.length >= OPTIONS - 1 ? same : ALL.filter(x => x.k === r.k && x.a !== r.a);
+  // половина вариантов — с той же первой подсказкой (та же эпоха, тот же автор, тот же вид места): первая подсказка не выдаёт ответ
+  const near = shuffle(pool.filter(x => x.h[0] === r.h[0])).slice(0, Math.floor(OPTIONS / 2));
+  const names = [...new Set([...near, ...shuffle(pool)].map(x => x.a))].slice(0, OPTIONS - 1);
+  return shuffle([r.a, ...names]);
+}
+
+function start(kind) {
+  const pool = shuffle(ALL.filter(r => kind === "all" || r.k === kind));
+  state = {kind, list: pool.slice(0, ROUNDS), n: 0, score: 0, guessed: 0, errors: new Map()};
+  show("game");
+  ask();
+}
+
+function ask() {
+  const s = state, r = s.r = s.list[s.n];
+  s.shown = 0; s.done = false;
+  $("round").textContent = `${s.n + 1}/${s.list.length}`;
+  $("score").textContent = points(s.score);
+  $("kind").textContent = NAMES[r.k] || "";
+  $("clues").replaceChildren();
+  $("hint").textContent = ""; $("hint").className = "hint";
+  $("next").hidden = true;
+  $("opts").replaceChildren(...options(r).map(a => {
+    const b = document.createElement("button");
+    b.textContent = a;
+    b.addEventListener("click", () => choose(b, a));
+    return b;
+  }));
+  reveal();
+}
+
+function reveal() {
+  const s = state, r = s.r;
+  if (s.shown >= clues(r)) return false;
+  const li = document.createElement("li"), box = document.createElement("div");
+  if (s.shown < r.h.length) box.textContent = r.h[s.shown];
+  else {
+    const img = document.createElement("img"), note = document.createElement("small");
+    img.src = r.img.src; img.alt = "Фото — последняя подсказка";
+    note.textContent = r.img.c ? `Фото: ${r.img.c}, Wikimedia Commons` : "Фото: Wikimedia Commons";
+    box.append(img, note);
+  }
+  li.append(box);
+  $("clues").append(li);
+  s.shown++;
+  $("more").disabled = s.shown >= clues(r);
+  $("worth").textContent = `Сейчас угадать — ${points(worth(s.shown))}`;
+  return true;
+}
+
+function choose(btn, a) {
+  const s = state;
+  if (!s || s.done) return;
+  if (a === s.r.a) {
+    const got = worth(s.shown);
+    s.score += got; s.guessed++;
+    btn.classList.add("ok");
+    end(`✅ Верно! +${points(got)}`, true);
+    return;
+  }
+  btn.classList.add("bad"); btn.disabled = true;
+  if (!reveal()) {
+    s.errors.set(s.r.a, `${s.r.a} — ${s.r.h.join("; ")}`);
+    end(`❌ Подсказки кончились. Это: ${s.r.a}`, false);
+  } else $("hint").textContent = "Не угадал. Вот ещё подсказка 👆";
+}
+
+function end(text, ok) {
+  const s = state;
+  s.done = true;
+  while (s.shown < clues(s.r)) reveal();  // все подсказки — чтобы запомнить
+  $("more").disabled = true;
+  $("worth").textContent = "";
+  $("opts").querySelectorAll("button").forEach(b => { b.disabled = true; if (b.textContent === s.r.a) b.classList.add("ok"); });
+  $("hint").textContent = text; $("hint").className = ok ? "hint ok" : "hint";
+  $("score").textContent = points(s.score);
+  $("next").hidden = false;
+}
+
+function next() {
+  state.n++;
+  if (state.n >= state.list.length) finish(); else ask();
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const record = best.save(s.kind, s.score);
+  $("final").textContent = `${points(s.score)} из ${s.list.length * 100}`;
+  $("hits").textContent = `Угадано: ${s.guessed} из ${s.list.length}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.kind)}`;
+  errorList(s.errors);
+  claimXP("q", s.guessed);
+  $("again").onclick = () => start(s.kind);
+  show("over");
+}
+
+function home() {
+  state = null;
+  const counts = {};
+  ALL.forEach(r => { counts[r.k] = (counts[r.k] || 0) + 1; });
+  const kinds = Object.keys(counts).filter(k => counts[k] >= OPTIONS);
+  const list = [...(kinds.length > 1 ? [["all", "🎲 Всё подряд"]] : []), ...kinds.map(k => [k, NAMES[k] || k])];
+  $("none").hidden = list.length > 0;
+  $("kinds").replaceChildren(...list.map(([id, title]) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.innerHTML = `<span></span><small>${best.get(id) ? "рекорд " + best.get(id) : "ещё не играл"}</small>`;
+    b.firstChild.textContent = title;
+    b.addEventListener("click", () => start(id));
+    return b;
+  }));
+  show("home");
+}
+
+$("more").addEventListener("click", () => { if (state && !state.done) reveal(); });
+$("next").addEventListener("click", next);
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+loadData(data => {
+  $("subj").textContent = `${data.title} · ${MODE_TITLE}`;
+  const mine = (data.whoami || []).filter(r => fits(r.m));
+  ALL = mine.filter(r => mine.filter(x => x.k === r.k).length >= OPTIONS);  // вариантов того же вида должно хватать
+  home();
+}, () => { $("none").hidden = false; $("none").textContent = "Не удалось загрузить загадки. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

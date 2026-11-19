@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: собери «блюдо» из плиток по порядку — слово из морфем, цепочку событий, строфу, определение.">
+<title>Кухня</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍳</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.kitchen { display: grid; gap: 14px; padding: 14px 10px; border: 1px solid var(--wood-edge); border-radius: 12px; background: var(--wood);
+  user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.plate { min-height: 120px; display: flex; flex-wrap: wrap; align-items: center; align-content: center; justify-content: center; gap: 6px;
+  padding: 16px 14px; background: var(--plate); border: 6px solid var(--plate-rim); border-radius: 40px; box-shadow: 0 3px 0 #00000014; }
+.plate.ok { border-color: var(--good); }
+.plate.bad { border-color: var(--hit); }
+.plate.word { gap: 2px; }
+.plate.block, .table.block { flex-direction: column; align-items: stretch; border-radius: 22px; }
+.empty { color: var(--muted); font-size: 14px; text-align: center; }
+.table { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; min-height: 90px; align-content: center; }
+.tile { min-width: 44px; min-height: 44px; padding: 8px 12px; border-radius: 14px; border: 1px solid var(--tile-edge); border-bottom-width: 4px;
+  background: var(--tile); color: var(--ink); font: 600 16px/1.25 system-ui, sans-serif; display: inline-grid; place-items: center;
+  cursor: pointer; text-align: center; overflow-wrap: anywhere; max-width: 100%; }
+.tile.comma { min-width: 44px; font-size: 24px; font-weight: 800; }
+.tile.used { visibility: hidden; }
+.block .tile { display: block; text-align: left; }
+.block.table .tile.used { display: none; }
+.plate.word .tile { border-radius: 8px; padding: 8px 9px; }
+.plate .tile { min-height: 40px; }
+.plate.block .tile { counter-increment: n; }
+.plate.block .tile::before { content: counter(n) ". "; color: var(--muted); margin-right: 4px; }
+.plate.block { counter-reset: n; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>🍳 Кухня</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Тебе называют «блюдо». Нажимай на плитки-ингредиенты по порядку — они ложатся на тарелку. Нажал на плитку на тарелке — она вернётся на стол. На столе есть лишние. Собрал — жми «Подать». Ошибся — минус жизнь, жизней три.</p>
+  </header>
+  <section class="sheet">
+    <h2>Что готовим</h2>
+    <div class="choices" id="kinds"></div>
+    <p class="note" id="none" hidden>Для этого класса рецептов пока нет.</p>
+  </section>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="score"></span><span class="lives" id="lives"></span></div>
+  </div>
+  <div class="task"><span id="num"></span><b id="ask"></b></div>
+  <div class="kitchen">
+    <div class="plate" id="plate"></div>
+    <div class="table" id="table"></div>
+  </div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+  <div class="row"><button class="main" id="serve">🍽 Подать</button><button id="clear">Убрать всё</button></div>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Кухня закрыта</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="dishes"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Правильные рецепты</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за верные ответы и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Рецепты — из данных бота (app/game_data.py): s — плитки по порядку, x — лишние, e — разбор, keep — не перемешивать части предложения.
+const LIVES = 3;
+const BLOCK = ["chain", "rank", "poem"], WORD = ["morph"];
+const best = records("kitchen");
+let RECIPES = [], KINDS = {}, state = null;
+
+function prepare(data) {
+  KINDS = data.kinds.kitchen;
+  RECIPES = data.kitchen.filter(r => fits(r.m));
+}
+
+function nextRecipe() {
+  const s = state, all = RECIPES.filter(r => s.kind === "all" || r.k === s.kind), limit = 3 + s.dishes;  // сначала короткие
+  let pool = all.filter(r => !s.used.has(r) && r.s.length <= limit);
+  if (!pool.length) pool = all.filter(r => !s.used.has(r));
+  if (!pool.length) { s.used.clear(); pool = all; }
+  const shortest = Math.min(...pool.map(r => r.s.length)), r = pick(pool.filter(x => x.s.length <= shortest + 1));
+  s.used.add(r);
+  return r;
+}
+
+function deal() {
+  const s = state, r = s.recipe = nextRecipe();
+  let tiles;
+  if (r.keep) {  // предложение: части по порядку, запятые отдельно — задача в том, где их поставить
+    const commas = r.s.filter(t => t === ",").length + r.x.filter(t => t === ",").length;
+    tiles = [...r.s.filter(t => t !== ","), ...Array(commas).fill(","), ...r.x.filter(t => t !== ",")];
+  } else tiles = shuffle([...r.s, ...r.x]);
+  s.tiles = tiles.map(t => ({t, used: false}));
+  s.plate = [];
+  s.done = false;
+  $("num").textContent = `Блюдо № ${s.dishes + 1} · ${KINDS[r.k] || ""}`;
+  $("ask").textContent = r.n;
+  $("hint").textContent = "";
+  $("plate").className = "plate";
+  $("serve").textContent = "🍽 Подать";
+  $("clear").disabled = false;
+  draw();
+}
+
+function tile(text, onTap, cls = "") {
+  const b = document.createElement("div");
+  b.className = "tile " + (text === "," ? "comma " : "") + cls;
+  b.textContent = text;
+  b.setAttribute("role", "button");
+  if (onTap) b.addEventListener("pointerdown", e => { e.preventDefault(); if (!state.done) onTap(); });
+  return b;
+}
+
+function draw() {
+  const s = state, r = s.recipe, plate = $("plate"), look = BLOCK.includes(r.k) ? " block" : WORD.includes(r.k) ? " word" : "";
+  plate.className = plate.className.replace(/ (block|word)/g, "") + look;
+  $("table").className = "table" + (BLOCK.includes(r.k) ? " block" : "");
+  const placed = s.plate.map((k, pos) => tile(s.tiles[k].t, () => { s.tiles[k].used = false; s.plate.splice(pos, 1); draw(); }));
+  const empty = document.createElement("span");
+  empty.className = "empty";
+  empty.textContent = r.k === "morph" ? "приставка, корень, суффикс, окончание — каждая часть отдельной плиткой" : r.k === "commas" ? "части предложения по порядку, запятые — где нужны" : "нажимай на плитки по порядку";
+  plate.replaceChildren(...(placed.length ? placed : [empty]));
+  $("table").replaceChildren(...s.tiles.map((x, k) => tile(x.t, () => { x.used = true; s.plate.push(k); draw(); }, x.used ? "used" : "")));
+  $("score").textContent = `★ ${s.score}`;
+  $("lives").textContent = "❤️".repeat(s.lives) + "🤍".repeat(LIVES - s.lives);
+  $("serve").disabled = !s.done && !s.plate.length;
+}
+
+function serve() {
+  const s = state;
+  if (s.done) return s.lives > 0 ? deal() : finish();
+  if (!s.plate.length) return;
+  const r = s.recipe, made = s.plate.map(k => s.tiles[k].t);
+  const ok = made.length === r.s.length && made.every((t, k) => t === r.s[k]);
+  s.done = true;
+  const hint = $("hint");
+  if (ok) {
+    s.streak++; s.dishes++;
+    const bonus = Math.min(s.streak - 1, 5);
+    s.score += 10 + bonus + Math.max(0, r.s.length - 3);  // длинное блюдо — больше очков
+    $("plate").className += " ok";
+    hint.className = "hint ok";
+    hint.textContent = "😋 Вкусно! +" + (10 + bonus + Math.max(0, r.s.length - 3)) + (bonus ? ` (серия ${s.streak})` : "");
+  } else {
+    s.streak = 0; s.lives--;
+    s.errors.set(r, `${r.n}\n${r.e}`);
+    $("plate").className += " bad";
+    hint.className = "hint";
+    hint.textContent = "Не то блюдо. Правильно:\n" + r.e;
+    try { navigator.vibrate && navigator.vibrate(60); } catch (e) {}
+  }
+  $("serve").textContent = s.lives > 0 ? "Дальше →" : "Итоги";
+  $("clear").disabled = true;
+  draw();
+}
+
+function start(kind) {
+  state = {kind, score: 0, lives: LIVES, dishes: 0, streak: 0, used: new Set(), errors: new Map()};
+  show("game");
+  deal();
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const record = best.save(s.kind, s.score);
+  $("final").textContent = points(s.score);
+  $("dishes").textContent = `Приготовлено: ${s.dishes} ${plural(s.dishes, "блюдо", "блюда", "блюд")}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.kind)}`;
+  errorList(s.errors);
+  claimXP("k", s.dishes);
+  $("again").onclick = () => start(s.kind);
+  show("over");
+}
+
+function home() {
+  state = null;
+  const have = [...new Set(RECIPES.map(r => r.k))].filter(k => RECIPES.filter(r => r.k === k).length >= 3);
+  const kinds = [...(have.length > 1 ? [["all", "🎲 Всё подряд"]] : []), ...have.map(k => [k, KINDS[k] || k])];
+  $("none").hidden = kinds.length > 0;
+  $("kinds").replaceChildren(...kinds.map(([id, title]) => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.innerHTML = `<span></span><small>${best.get(id) ? "рекорд " + best.get(id) : "ещё не играл"}</small>`;
+    b.firstChild.textContent = title;
+    b.addEventListener("click", () => start(id));
+    return b;
+  }));
+  show("home");
+}
+
+$("serve").addEventListener("click", serve);
+$("clear").addEventListener("click", () => { state.tiles.forEach(x => { x.used = false; }); state.plate = []; draw(); });
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+loadData(data => { $("subj").textContent = `${data.title} · ${MODE_TITLE}`; prepare(data); home(); },
+  () => { $("none").hidden = false; $("none").textContent = "Не получилось загрузить рецепты. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

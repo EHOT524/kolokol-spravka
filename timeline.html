@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: поставь событие на ленту времени — чем точнее год, тем больше очков.">
+<title>Лента времени</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📜</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+.event { font-size: 19px; font-weight: 700; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+  min-height: 80px; display: grid; align-items: center; text-align: center; }
+.tape { position: relative; height: 110px; margin: 8px 18px 0; touch-action: none; cursor: pointer; user-select: none;
+  -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+/* бегунок: тянут пальцем по всей ленте (pointer events), год меняется по одному */
+.knob { position: absolute; top: 42px; width: 30px; height: 30px; margin-left: -15px; border-radius: 50%; background: var(--accent);
+  border: 3px solid var(--panel); box-shadow: 0 1px 4px #0005; pointer-events: none; }
+.tape.done .knob { opacity: .55; }
+.nudge { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.nudge button { padding: 12px 0; font-size: 17px; }
+.hint.tip { color: var(--muted); font-weight: 400; }  /* подсказка, как играть, — не красным, как ошибка */
+.axis { position: absolute; left: 0; right: 0; top: 54px; height: 6px; border-radius: 3px; background: var(--rim); }
+.tick { position: absolute; top: 48px; width: 2px; height: 18px; background: var(--rim); transform: translateX(-1px); }
+.tick span { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pin { position: absolute; top: 14px; width: 0; transform: translateX(-50%); font-size: 26px; line-height: 1; }
+.pin::after { content: ""; position: absolute; left: -1px; top: 30px; width: 2px; height: 14px; background: currentColor; }
+.pin.me { color: var(--accent); }
+.pin.true { color: var(--good); top: 70px; }
+.pin.true::after { top: -12px; }
+.band { position: absolute; top: 52px; height: 10px; background: var(--good-bg); border: 1px solid var(--good); border-radius: 5px; }
+.year { text-align: center; font-size: 22px; font-weight: 750; min-height: 30px; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>📜 Лента времени</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Игра называет событие, а ты ставишь его на ленту времени эпохи: тяни бегунок к нужному году (можно и просто нажать на ленту), точный год подбери кнопками −10, −1, +1, +10 и подтверди. Угадал год — 100 очков, ошибся на четверть ленты — 0. Раундов десять.</p>
+  </header>
+  <section class="sheet">
+    <h2>Эпоха</h2>
+    <div class="choices" id="kinds"></div>
+    <p class="note" id="none" hidden>Для этого класса событий пока мало.</p>
+  </section>
+</main>
+
+<main class="wrap" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="round"></span><span id="score"></span></div>
+  </div>
+  <div class="event" id="event"></div>
+  <p class="year" id="year"></p>
+  <div class="tape" id="tape"><div class="axis"></div><div class="knob" id="knob"></div></div>
+  <div class="nudge" id="nudge"><button data-d="-10">−10</button><button data-d="-1">−1</button><button data-d="1">+1</button><button data-d="10">+10</button></div>
+  <p class="hint tip" id="hint" aria-live="polite">Тяни бегунок, а точный год подбери кнопками ±</p>
+  <div class="row"><button class="main" id="go">Здесь!</button></div>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Лента свёрнута</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="hits"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Где промахнулся</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за точные ответы и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script>
+"use strict";
+// Эпохи и события — из данных бота (app/game_data.py, timeline): t — событие, y — год (до н. э. — минус), s — как писать год.
+const ROUNDS = 10, GOOD = 70, STEPS = [5, 10, 25, 50, 100, 250, 500, 1000];
+const best = records("timeline");
+let ERAS = [], state = null;
+
+const yearText = y => y < 0 ? `${-y} г. до н. э.` : `${y} г.`;
+
+function start(id) {
+  const era = ERAS.find(e => e.id === id);
+  const ys = era.ev.map(e => e.y), lo = Math.min(...ys), hi = Math.max(...ys), pad = Math.max(5, Math.round((hi - lo) * 0.06));
+  state = {id, era, from: lo - pad, to: hi + pad, list: shuffle(era.ev).slice(0, ROUNDS), n: 0, score: 0, good: 0, errors: new Map()};
+  show("game");
+  drawTicks();
+  ask();
+}
+
+function x(y) { const s = state; return (y - s.from) / (s.to - s.from) * 100; }
+
+function drawTicks() {
+  const s = state, span = s.to - s.from, step = STEPS.find(v => span / v <= 6) || 2000;
+  const tape = $("tape");
+  tape.querySelectorAll(".tick").forEach(t => t.remove());
+  for (let y = Math.ceil(s.from / step) * step; y <= s.to; y += step) {
+    const t = document.createElement("div"), label = document.createElement("span");
+    t.className = "tick"; t.style.left = x(y) + "%";
+    label.textContent = y < 0 ? `${-y} до н. э.` : y;
+    t.append(label);
+    tape.append(t);
+  }
+}
+
+function ask() {
+  const s = state, e = s.e = s.list[s.n];
+  s.done = false;
+  $("round").textContent = `${s.n + 1}/${s.list.length}`;
+  $("score").textContent = points(s.score);
+  $("event").textContent = e.t;
+  $("tape").querySelectorAll(".pin, .band").forEach(p => p.remove());
+  $("tape").classList.remove("done");
+  $("nudge").querySelectorAll("button").forEach(b => { b.disabled = false; });
+  $("hint").textContent = "Тяни бегунок, а точный год подбери кнопками ±"; $("hint").className = "hint tip";
+  $("go").textContent = "Здесь!";
+  setPick(Math.round((s.from + s.to) / 2), 1);  // бегунок — на середине эпохи
+}
+
+function pin(cls, y, label) {
+  const p = document.createElement("div");
+  p.className = "pin " + cls; p.style.left = x(y) + "%"; p.textContent = label;
+  $("tape").append(p);
+}
+
+function setPick(y, dir) {
+  const s = state;
+  y = Math.min(s.to, Math.max(s.from, Math.round(y)));
+  if (y === 0) y = dir < 0 ? -1 : 1;  // нулевого года нет: после 1 г. до н. э. сразу 1 г. н. э.
+  s.pick = y;
+  $("knob").style.left = x(y) + "%";
+  $("year").textContent = yearText(y);
+}
+
+// бегунок: нажал на ленту — он прыгает сюда, повёл пальцем — едет за ним (лента на всю ширину, год меняется по одному)
+function dragTo(ev) {
+  const s = state, r = $("tape").getBoundingClientRect();
+  const share = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)), y = s.from + share * (s.to - s.from);
+  setPick(y, y - s.pick);
+}
+$("tape").addEventListener("pointerdown", ev => {
+  if (!state || state.done) return;
+  $("tape").setPointerCapture(ev.pointerId);
+  dragTo(ev);
+});
+$("tape").addEventListener("pointermove", ev => {
+  if (state && !state.done && $("tape").hasPointerCapture(ev.pointerId)) dragTo(ev);
+});
+$("nudge").addEventListener("click", ev => {
+  const d = +(ev.target.dataset.d || 0);
+  if (d && state && !state.done) setPick(state.pick + d, d);
+});
+
+function answer() {
+  const s = state;
+  if (s.done) return next();
+  s.done = true;
+  $("tape").classList.add("done");
+  $("nudge").querySelectorAll("button").forEach(b => { b.disabled = true; });
+  const e = s.e, err = Math.abs(s.pick - e.y), span = s.to - s.from;
+  const got = Math.max(0, Math.round(100 * (1 - err / (span / 4))));
+  s.score += got;
+  if (got >= GOOD) s.good++;
+  else s.errors.set(e.t, `${e.t} — ${e.s}`);
+  pin("true", e.y, "✅");
+  $("year").textContent = `${e.s} (ты: ${yearText(s.pick)})`;
+  $("hint").textContent = got >= GOOD ? `Точно! +${points(got)}` : `Промах на ${err} ${plural(err, "год", "года", "лет")}: +${points(got)}`;
+  $("hint").className = got >= GOOD ? "hint ok" : "hint";
+  $("score").textContent = points(s.score);
+  $("go").textContent = s.n + 1 < s.list.length ? "Дальше ▶️" : "Итоги";
+}
+
+function next() {
+  state.n++;
+  if (state.n >= state.list.length) finish(); else ask();
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const record = best.save(s.id, s.score);
+  $("final").textContent = `${points(s.score)} из ${s.list.length * 100}`;
+  $("hits").textContent = `Точных ответов: ${s.good} из ${s.list.length}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.id)}`;
+  errorList(s.errors);
+  claimXP("e", s.good);
+  $("again").onclick = () => start(s.id);
+  show("over");
+}
+
+function home() {
+  state = null;
+  $("none").hidden = ERAS.length > 0;
+  $("kinds").replaceChildren(...ERAS.map(era => {
+    const b = document.createElement("button");
+    b.className = "choice";
+    b.innerHTML = `<span></span><small>${best.get(era.id) ? "рекорд " + best.get(era.id) : "ещё не играл"}</small>`;
+    b.firstChild.textContent = era.title;
+    b.addEventListener("click", () => start(era.id));
+    return b;
+  }));
+  show("home");
+}
+
+$("go").addEventListener("click", answer);
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+loadData(data => {
+  $("subj").textContent = `${data.title} · ${MODE_TITLE}`;
+  ERAS = (data.timeline || []).map(e => ({...e, ev: e.ev.filter(v => fits(v.m))})).filter(e => e.ev.length >= 6);
+  home();
+}, () => { $("none").hidden = false; $("none").textContent = "Не удалось загрузить события. Проверь интернет и открой игру ещё раз."; });
+</script>
+</body>
+</html>

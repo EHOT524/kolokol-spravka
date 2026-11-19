@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Тренажёр «Колокол»</title>
+<meta name="description" content="Перетащи подписи к схеме: сердце, глаз, ухо, микроскоп, деление клетки, циклы развития — тренажёр бота @Kolokolgame">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧩</text></svg>">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6b6f76; --line: #e3e1da;
+  --accent: #2f6f5e; --accent-ink: #ffffff; --chip: #ecebe5; --ok: #1f8a4c; --ok-bg: #e3f4ea; --bad: #c0392b; --bad-bg: #fbe7e4;
+  --sel: #f2b705;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #2e3238;
+    --accent: #5fb39a; --accent-ink: #0f1513; --chip: #2a2e33; --ok: #5fcf8e; --ok-bg: #173323; --bad: #ef7d6f; --bad-bg: #3a1d1a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9a9ea5; --line: #2e3238;
+  --accent: #5fb39a; --accent-ink: #0f1513; --chip: #2a2e33; --ok: #5fcf8e; --ok-bg: #173323; --bad: #ef7d6f; --bad-bg: #3a1d1a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-text-size-adjust: 100%; }
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; }
+header .row { display: flex; align-items: center; gap: 10px; max-width: 1100px; margin: 0 auto; }
+h1 { font-size: 17px; margin: 0; font-weight: 650; flex: 1; }
+a { color: var(--accent); }
+.link { font-size: 14px; text-decoration: none; white-space: nowrap; }
+main { padding: 14px 16px 50px; max-width: 1100px; margin: 0 auto; }
+h2 { font-size: 15px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.card { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  color: var(--ink); text-decoration: none; }
+.card b { display: block; }
+.card small { color: var(--muted); }
+.hint { color: var(--muted); font-size: 14px; margin: 4px 0 12px; }
+.work { display: grid; gap: 14px; }
+@media (min-width: 820px) { .work { grid-template-columns: 1.25fr 1fr; align-items: start; } .side { position: sticky; top: 64px; } }
+@media (max-width: 819px) { .work.label > div:first-child { position: sticky; top: 52px; z-index: 3; background: var(--bg); padding-bottom: 6px; }
+  .work .pic svg, .work .pic img { max-height: 34vh; width: auto; max-width: 100%; margin: 0 auto; } .work.done > div:first-child { position: static; } }
+.pic { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 6px; overflow: hidden; }
+.pic svg, .pic img { display: block; width: 100%; height: auto; }
+.anim { margin-top: 10px; }
+.slots { display: grid; gap: 6px; }
+.slot { display: flex; align-items: center; gap: 8px; min-height: 44px; background: var(--panel); border: 2px dashed var(--line);
+  border-radius: 10px; padding: 4px 8px; cursor: pointer; transition: background .2s, border-color .2s; }
+.slot .n { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--bg); font-weight: 700;
+  font-size: 13px; display: grid; place-items: center; }
+.slot.over { border-color: var(--accent); background: var(--chip); }
+.slot.filled { border-style: solid; }
+.slot.ok { border-color: var(--ok); background: var(--ok-bg); }
+.slot.bad { border-color: var(--bad); background: var(--bad-bg); }
+.slot .right { font-size: 12px; color: var(--bad); margin-left: auto; text-align: right; }
+.slot.fixed { cursor: default; border-style: solid; opacity: .85; }
+.order .slot .n { border-radius: 8px; }
+.pool { display: flex; flex-wrap: wrap; gap: 6px; min-height: 52px; padding: 8px; margin-bottom: 10px; border-radius: 10px;
+  background: var(--chip); }
+.pool.over { outline: 2px dashed var(--accent); }
+.pool:empty::after { content: "Все подписи на местах — жми «Проверить»"; color: var(--muted); font-size: 13px; padding: 6px; }
+.tag { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 7px 10px; font: inherit;
+  font-size: 14px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; text-align: left; line-height: 1.3; }
+.slot .tag { border: 0; padding: 4px 2px; background: none; flex: 1; }
+.tag.sel { outline: 3px solid var(--sel); }
+.ghost { position: fixed; z-index: 50; pointer-events: none; opacity: .9; box-shadow: 0 6px 20px rgba(0,0,0,.25); transform: translate(-50%, -60%); }
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.btn { border: 0; border-radius: 10px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; background: var(--chip); color: var(--ink); }
+.btn.main { background: var(--accent); color: var(--accent-ink); }
+.msg { margin-top: 12px; padding: 10px 12px; border-radius: 10px; display: none; }
+.msg.show { display: block; }
+.msg.ok { background: var(--ok-bg); }
+.msg.bad { background: var(--bad-bg); }
+.credit { color: var(--muted); font-size: 12px; margin-top: 6px; }
+/* цикл развития после верного ответа: стадии по очереди загораются */
+.cycle { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+.cycle li { display: flex; gap: 10px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 6px 10px; animation: glow calc(var(--n) * 1s) infinite; animation-delay: calc(var(--i) * 1s); }
+.cycle li span { font-size: 24px; display: inline-block; animation: hop calc(var(--n) * 1s) infinite; animation-delay: calc(var(--i) * 1s); }
+.cycle li + li::before { content: "↓"; position: absolute; }
+.cycle .back { text-align: center; color: var(--muted); font-size: 13px; }
+@keyframes glow { 0%, 10% { background: var(--ok-bg); border-color: var(--ok); } 16%, 100% { background: var(--panel); border-color: var(--line); } }
+@keyframes hop { 0% { transform: scale(1); } 5% { transform: scale(1.35); } 12%, 100% { transform: scale(1); } }
+
+/* ---------- рисованные схемы ---------- */
+.pic svg text { font: 600 13px system-ui, sans-serif; fill: #111; }
+.lab line { stroke: #222; stroke-width: 1.2; }
+.lab .pt { fill: #222; }
+.nc { fill: #fff; stroke: #222; stroke-width: 1.8; }
+.pic svg text.cap { font-size: 10.5px; font-weight: 500; }
+.lab text, .ntx { text-anchor: middle; dominant-baseline: central; font-weight: 700 !important; }
+.to { fill: none; stroke: #222; }
+.ti { fill: none; stroke: #efefef; transition: stroke 1s; }
+.ch { fill: #efefef; stroke: #222; stroke-width: 3; transition: fill 1s; }
+.ch.lv { stroke-width: 6; }
+.flap { stroke: #222; stroke-width: 4; stroke-linecap: round; }
+.flow { opacity: 0; }
+.run .flow { opacity: 1; }
+.flow.ven { fill: #2b63c9; } .flow.art { fill: #d23a2a; } .flow.sig { fill: #f2b705; stroke: #8a6a00; }
+.run .ti.ven { stroke: #a9c6f2; } .run .ti.art { stroke: #f2aaa2; }
+.run .ch.ven { fill: #d3e2f8; } .run .ch.art { fill: #f8d3ce; }
+.atria, .vent { transform-box: fill-box; }
+.atria { transform-origin: 50% 100%; } .vent { transform-origin: 50% 0%; }
+.run .atria { animation: hb-atr 1.4s infinite; }
+.run .vent { animation: hb-ven 1.4s infinite; }
+.run .fl { animation: v-l 1.4s infinite; } .run .fr { animation: v-r 1.4s infinite; }
+@keyframes hb-atr { 0%, 30%, 100% { transform: scale(1); } 12% { transform: scale(.92); } }
+@keyframes hb-ven { 0%, 28%, 72%, 100% { transform: scale(1); } 48% { transform: scale(.91); } }
+@keyframes v-l { 0%, 26%, 74%, 100% { transform: rotate(0); } 34%, 66% { transform: rotate(-62deg); } }
+@keyframes v-r { 0%, 26%, 74%, 100% { transform: rotate(0); } 34%, 66% { transform: rotate(62deg); } }
+/* глаз */
+.ray { fill: none; stroke-width: 2; stroke-dasharray: 420; stroke-dashoffset: 420; opacity: 0; }
+.ray.r1 { stroke: #f0a020; } .ray.r2 { stroke: #e05a00; }
+.obj, .img, .sun, .beam, .eyeic, .zoom, .brain, .wave { opacity: 0; }
+.run .obj { opacity: 1; transition: opacity .6s; }
+.run .ray { animation: ray 4s infinite; }
+.run .img { animation: show 4s infinite; }
+.run .iris .it { animation: pupil-t 4s infinite; } .run .iris .ib { animation: pupil-b 4s infinite; }
+@keyframes ray { 0% { stroke-dashoffset: 420; opacity: .9; } 40%, 85% { stroke-dashoffset: 0; opacity: .9; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes show { 0%, 38% { opacity: 0; } 45%, 88% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes pupil-t { 0%, 30%, 100% { transform: translateY(0); } 50%, 85% { transform: translateY(7px); } }
+@keyframes pupil-b { 0%, 30%, 100% { transform: translateY(0); } 50%, 85% { transform: translateY(-7px); } }
+/* ухо */
+.run .wave { animation: wave 1.5s linear infinite; }
+@keyframes wave { 0% { transform: translateX(0); opacity: 0; } 15% { opacity: .9; } 100% { transform: translateX(120px); opacity: 0; } }
+.drum, .sta { transform-box: fill-box; transform-origin: center; }
+.run .drum { animation: shake .18s infinite alternate; }
+.run .sta { animation: shake .18s infinite alternate; }
+.run .mal { animation: rock .18s infinite alternate; } .run .inc { animation: rock2 .18s infinite alternate; }
+.run .coch { stroke: #f2c94c; stroke-dasharray: 8 8; animation: run-dash .8s linear infinite; }
+.run .brain { opacity: 1; transition: opacity 1s 1s; }
+@keyframes shake { from { transform: translateX(-2px); } to { transform: translateX(2px); } }
+@keyframes rock { from { transform: rotate(-5deg); } to { transform: rotate(5deg); } }
+@keyframes rock2 { from { transform: rotate(4deg); } to { transform: rotate(-4deg); } }
+@keyframes run-dash { to { stroke-dashoffset: -32; } }
+/* микроскоп */
+.beam { fill: none; stroke: #ffd23f; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 520; stroke-dashoffset: 520; }
+.run .sun { opacity: 1; transition: opacity .5s; }
+.run .beam { animation: beam 5s infinite; }
+.run .eyeic { animation: show2 5s infinite; }
+.zoom { transform-box: fill-box; transform-origin: center; }
+.run .zoom { animation: zoom 5s infinite; }
+@keyframes beam { 0% { stroke-dashoffset: 520; opacity: .85; } 45%, 90% { stroke-dashoffset: 0; opacity: .85; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes show2 { 0%, 40% { opacity: 0; } 48%, 92% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes zoom { 0%, 45% { opacity: 0; transform: scale(.2); } 55%, 92% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
+</style>
+</head>
+<body>
+<header><div class="row">
+  <h1 id="title">🧩 Тренажёр по биологии</h1>
+  <a class="link" id="back" href="#">← Все задания</a>
+  <a class="link" href="index.html#bio/pictures/all">📚 Справочник</a>
+</div></header>
+<main id="out"></main>
+<script src="bot-xp.js"></script>
+<script src="trainer_svg.js"></script>
+<script src="data/trainer.js"></script>
+<script>
+function initTelegram() {
+  const tg = window.Telegram && Telegram.WebApp;
+  if (!tg || !tg.initData) return;
+  tg.ready(); tg.expand();
+  if (tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme;
+}
+if (window.Telegram) initTelegram();
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+// все задания: рисованные (оживают), циклы развития, схемы из справочника
+const ALL = [
+  ...DRAWN.map(x => ({...x, kind: "label", group: "live"})),
+  ...TRAINER.cycles.map(x => ({...x, kind: "order", group: "cycle"})),
+  ...TRAINER.raster.map(x => ({...x, kind: "label", group: "raster"})),
+];
+const GROUPS = [["live", "▶ Оживают, когда всё верно"], ["cycle", "🔄 Циклы развития: расставь по порядку"], ["raster", "🖼 Схемы из справочника"]];
+
+function menu() {
+  $("title").textContent = "🧩 Тренажёр по биологии";
+  $("back").style.display = "none";
+  let html = `<p class="hint">Перетащи названия к цифрам на схеме и нажми «Проверить». На телефоне можно проще: нажми название, потом строку с цифрой.</p>`;
+  for (const [g, title] of GROUPS) {
+    html += `<h2>${title}</h2><div class="grid">`;
+    for (const x of ALL.filter(x => x.group === g))
+      html += `<a class="card" href="#${x.id}"><b>${esc(x.title)}</b><small>${x.grade} класс · ${x.kind === "order" ? x.stages.length + " стадий" : x.parts.length + " подписей"}</small></a>`;
+    html += `</div>`;
+  }
+  $("out").innerHTML = html;
+  window.scrollTo(0, 0);
+}
+
+let ex, placed, sel, checked;
+
+function open(x) {
+  ex = x; placed = {}; sel = null; checked = false;
+  $("title").textContent = x.title;
+  $("back").style.display = "";
+  if (x.kind === "order") placed[1] = x.stages[0][1];
+  const pic = x.kind === "order" ? "" :
+    `<div class="pic" id="pic">${x.svg || `<img src="${x.img}" alt="${esc(x.title)}">`}</div>${x.anim ? `<div class="pic anim" id="anim" hidden>${x.anim}</div>` : ""}` +
+    (x.credit ? `<div class="credit">${x.credit}</div>` : "");
+  const hint = x.kind === "order"
+    ? "Расставь стадии по порядку: первая уже на месте. Перетащи карточки в строки 2, 3, 4… или нажми карточку, потом строку."
+    : (x.note ? esc(x.note) + " " : "") + "Перетащи названия к цифрам или нажми название, потом строку.";
+  $("out").innerHTML = `<p class="hint">${hint}</p><div class="work ${x.kind}">${pic ? `<div>${pic}</div>` : ""}
+    <div class="side"><div class="pool" id="pool"></div><div class="slots" id="slots"></div>
+    <div class="buttons"><button class="btn main" id="check">✅ Проверить</button><button class="btn" id="reset">🔁 Заново</button>
+    <button class="btn" id="next">➡️ Следующее</button></div><div class="msg" id="msg"></div></div></div>`;
+  $("check").onclick = check; $("reset").onclick = () => open(x);
+  $("next").onclick = () => { const i = ALL.indexOf(x); location.hash = ALL[(i + 1) % ALL.length].id; };
+  x.pool = shuffle(answers().filter((_, i) => x.kind !== "order" || i > 0));
+  draw();
+  window.scrollTo(0, 0);
+}
+
+// верный ответ по номерам строк
+function key() {
+  return ex.kind === "order" ? ex.stages.map((s, i) => [i + 1, s[1]]) : ex.parts;
+}
+function answers() { return key().map(p => p[1]); }
+function emoji(name) { const s = ex.stages && ex.stages.find(s => s[1] === name); return s ? s[0] + " " : ""; }
+
+function tag(name, from) {
+  const b = document.createElement("button");
+  b.className = "tag" + (sel && sel.name === name ? " sel" : "");
+  b.textContent = emoji(name) + name;
+  b.dataset.name = name;
+  drag(b, name, from);
+  return b;
+}
+
+function draw() {
+  const slots = $("slots"); slots.replaceChildren();
+  for (const [n, right] of key()) {
+    const d = document.createElement("div");
+    const fixed = ex.kind === "order" && n === 1;
+    d.className = "slot" + (placed[n] ? " filled" : "") + (fixed ? " fixed" : "");
+    d.dataset.n = n;
+    d.innerHTML = `<span class="n">${n}</span>`;
+    if (placed[n]) {
+      if (fixed) { const s = document.createElement("span"); s.textContent = emoji(placed[n]) + placed[n]; d.appendChild(s); }
+      else d.appendChild(tag(placed[n], n));
+    }
+    if (checked && !fixed) {
+      const ok = placed[n] === right;
+      d.classList.add(ok ? "ok" : "bad");
+      if (!ok) d.insertAdjacentHTML("beforeend", `<span class="right">верно: ${esc(right)}</span>`);
+    }
+    if (!fixed) d.onclick = () => tapSlot(n);
+    slots.appendChild(d);
+  }
+  const pool = $("pool"); pool.replaceChildren();
+  for (const name of ex.pool) if (!Object.values(placed).includes(name)) pool.appendChild(tag(name, null));
+  pool.onclick = () => { if (sel) put(sel.name, sel.from, null); };
+}
+
+function clearCheck() {
+  if (!checked) return;
+  checked = false; $("msg").className = "msg";
+}
+
+// положить подпись name (была в строке from или в списке) в строку to (или обратно в список, если to = null)
+function put(name, from, to) {
+  clearCheck();
+  if (to !== null && placed[to] && from !== null) placed[from] = placed[to];   // поменять местами
+  else if (from !== null) delete placed[from];
+  if (to !== null) placed[to] = name;
+  sel = null;
+  draw();
+}
+
+function tapSlot(n) {
+  if (sel) return put(sel.name, sel.from, n);
+  if (placed[n]) { sel = {name: placed[n], from: n}; draw(); }
+}
+
+function drag(el, name, from) {
+  el.addEventListener("pointerdown", e => {
+    if (e.button > 0) return;
+    const x0 = e.clientX, y0 = e.clientY;
+    let ghost = null, over = null;
+    el.setPointerCapture(e.pointerId);
+    const move = ev => {
+      if (!ghost && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 8) return;
+      if (!ghost) { ghost = el.cloneNode(true); ghost.classList.add("ghost"); document.body.appendChild(ghost); }
+      ghost.style.left = ev.clientX + "px"; ghost.style.top = ev.clientY + "px";
+      const t = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = t && (t.closest(".slot:not(.fixed)") || t.closest(".pool"));
+      if (over !== target) { over && over.classList.remove("over"); over = target; over && over.classList.add("over"); }
+    };
+    const up = ev => {
+      el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
+      over && over.classList.remove("over");
+      if (ghost) {
+        ghost.remove();
+        el.dragged = true;
+        if (over) put(name, from, over.classList.contains("pool") ? null : +over.dataset.n);
+      }
+    };
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  });
+  // нажатие без перетаскивания: выбрать (или снять выбор); выбранную подпись потом кладут нажатием на строку
+  el.addEventListener("click", e => {
+    e.stopPropagation();
+    if (el.dragged) return;
+    if (sel && sel.name === name) sel = null;
+    else if (sel && from !== null) return put(sel.name, sel.from, from);
+    else sel = {name, from};
+    draw();
+  });
+}
+
+function check() {
+  const msg = $("msg");
+  const empty = key().filter(([n]) => !placed[n]).length;
+  if (empty) { msg.className = "msg show bad"; msg.textContent = `Заполни все строки: пустых ещё ${empty}.`; return; }
+  checked = true;
+  const wrong = key().filter(([n, r]) => placed[n] !== r).length;
+  draw();
+  if (wrong) {
+    msg.className = "msg show bad";
+    msg.textContent = `Ошибок: ${wrong} из ${key().length - (ex.kind === "order" ? 1 : 0)}. Красные строки — исправь и проверь ещё раз.`;
+    return;
+  }
+  msg.className = "msg show ok";
+  document.querySelector(".work").classList.add("done");
+  msg.innerHTML = `<b>🎉 Всё верно!</b>` + (ex.done ? `<br>${esc(ex.done)}` : "") +
+    (ex.group === "live" ? `<div class="buttons"><button class="btn" id="replay">▶ Ещё раз</button></div>` : "");
+  if (ex.kind === "order") {
+    const n = ex.stages.length;
+    msg.insertAdjacentHTML("beforeend", `<ul class="cycle">${ex.stages.map((s, i) =>
+      `<li style="--i:${i};--n:${n}"><span>${s[0]}</span>${esc(s[1])}</li>`).join("")}<li class="back" style="--i:${n};--n:${n + 1};animation:none">↻ и всё сначала</li></ul>`);
+  }
+  if (ex.group === "live") { play(); $("replay").onclick = play; }
+  // опыт в бота: каждая схема один раз в день (bot-xp.js)
+  if (BotXP.firstToday(ex.id)) BotXP.add("t", "bio", 1);
+  if (BotXP.pending("t", "bio")) {
+    msg.insertAdjacentHTML("beforeend", `<div class="buttons"><button class="btn" id="claim"></button></div>`);
+    BotXP.button($("claim"), "t", "bio");
+  }
+}
+
+// оживить схему: CSS-анимации включает класс run, SMIL-точки запускаются по очереди
+function play() {
+  const box = ex.anim ? $("anim") : $("pic");
+  box.hidden = false;
+  box.classList.remove("run");
+  void box.offsetWidth;
+  box.classList.add("run");
+  const svg = box.querySelector("svg");
+  try { svg.setCurrentTime && svg.setCurrentTime(0); } catch (e) {}
+  box.querySelectorAll("[begin=indefinite]").forEach(a => { try { a.endElement(); a.beginElementAt(+(a.dataset.d || 0)); } catch (e) {} });
+  if (ex.anim) box.scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+function route() {
+  const id = decodeURIComponent(location.hash.slice(1));
+  const x = ALL.find(x => x.id === id);
+  x ? open(x) : menu();
+}
+$("back").onclick = e => { e.preventDefault(); location.hash = ""; };
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

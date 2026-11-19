@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Игра бота «Колокол»: покажи место на контурной карте — чем ближе, тем больше очков.">
+<title>Ткни в карту</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺</text></svg>">
+<link rel="stylesheet" href="game.css">
+<script async src="https://telegram.org/js/telegram-web-app.js" onload="window.initTelegram && initTelegram()"></script>
+<style>
+:root { --sea: #cfe3f2; --land: #f6f1df; --coast: #9db3a0; --river: #6fa6d6; --lake: #b9d6ee; --grid: #1f232822; --pin: #c0392b; --target: #1f8a4c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --sea: #14283a; --land: #33402f; --coast: #5c7358; --river: #4f8fc4; --lake: #1d3b55; --grid: #ffffff1c; --pin: #ff8a7a; --target: #6fe09c; } }
+:root[data-theme="dark"] { --sea: #14283a; --land: #33402f; --coast: #5c7358; --river: #4f8fc4; --lake: #1d3b55; --grid: #ffffff1c; --pin: #ff8a7a; --target: #6fe09c; }
+.wrap.wide { max-width: 980px; }
+.mapbox { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--sea); -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain; touch-action: pan-x pan-y; }
+.mapbox svg { display: block; cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.sea { fill: var(--sea); }
+.land { fill: var(--land); stroke: var(--coast); stroke-width: 1; stroke-linejoin: round; fill-rule: evenodd; vector-effect: non-scaling-stroke; }
+.r .land { stroke: none; }  /* на карте России суша разрезана по 180° — контур дал бы линию через Чукотку */
+.lakes { fill: var(--lake); fill-rule: evenodd; }
+.rivers { fill: none; stroke: var(--river); stroke-width: 1; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.grid { fill: none; stroke: var(--grid); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.grid.main { stroke-dasharray: 6 4; stroke-width: 1.4; }
+.pin { fill: var(--pin); stroke: #fff; vector-effect: non-scaling-stroke; stroke-width: 2; }
+.target { fill: var(--target); stroke: #fff; vector-effect: non-scaling-stroke; stroke-width: 2; }
+.area { fill: var(--target); fill-opacity: .22; stroke: var(--target); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.miss { stroke: var(--pin); stroke-width: 2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; fill: none; }
+.tools { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.tools .note { flex: 1; }
+.zoom { display: flex; gap: 6px; }
+.zoom button { padding: 6px 14px; font-size: 18px; line-height: 1.1; min-width: 44px; }
+.task small { color: var(--muted); font-weight: 400; font-size: 14px; }
+h2.group { margin-top: 4px; }
+</style>
+</head>
+<body>
+<main class="wrap" id="home">
+  <header>
+    <h1>🗺 Ткни в карту</h1>
+    <p class="subject" id="subj"></p>
+    <p class="lead" style="margin-top:8px">Игра называет место — город, реку, море, гору. Найди его на контурной карте, нажми туда и подтверди. Чем ближе к настоящему месту, тем больше очков: до 100 за раунд, раундов десять. Карту можно двигать пальцем и увеличивать кнопками.</p>
+  </header>
+  <section class="sheet">
+    <div id="kinds" style="display:grid;gap:12px"></div>
+    <p class="note" id="none" hidden>Для этого класса мест на карте пока нет.</p>
+  </section>
+</main>
+
+<main class="wrap wide" id="game" hidden>
+  <div class="top">
+    <button class="back" id="quit">⏹ Закончить</button>
+    <div class="hud"><span id="round"></span><span id="score"></span></div>
+  </div>
+  <div class="task"><span id="num"></span><b id="ask"></b></div>
+  <div class="mapbox" id="mapbox"></div>
+  <div class="tools"><p class="note" id="tip">Нажми на карту, чтобы поставить метку.</p>
+    <div class="zoom"><button id="minus" aria-label="Уменьшить карту">−</button><button id="plus" aria-label="Увеличить карту">+</button></div></div>
+  <p class="hint" id="hint" aria-live="polite"></p>
+  <div class="row"><button class="main" id="go" disabled>📍 Ответить</button></div>
+</main>
+
+<main class="wrap" id="over" hidden>
+  <h1>Игра окончена</h1>
+  <section class="sheet">
+    <p class="big" id="final"></p>
+    <p id="hits"></p>
+    <p id="best"></p>
+  </section>
+  <section class="sheet" id="errbox">
+    <h2>Где промахнулся</h2>
+    <ul class="errors" id="errors"></ul>
+  </section>
+  <button class="main" id="claim" hidden></button>
+  <p class="note" id="claimnote" hidden>Бот начислит опыт за точные ответы и напишет в чат. Игра не закроется — можно играть дальше.</p>
+  <div class="row"><button class="main" id="again">Ещё раз</button><button id="menu">Назад</button></div>
+</main>
+
+<script src="game.js"></script>
+<script src="bot-xp.js"></script>
+<script src="data/geomap.js"></script>
+<script>
+"use strict";
+// Карты и места — data/geomap.js (tools/build_geomap.py). Проекции — те же формулы, что в сборщике: нажатие переводится
+// в широту и долготу, промах считается по дуге большого круга до ближайшей точки места минус его радиус.
+const ROUNDS = 10, GOOD = 80, RAD = Math.PI / 180, NS = "http://www.w3.org/2000/svg";
+const best = records("geomap");
+const G = window.GEOMAP;
+let PLACES = [], state = null, svg = null, zoom = 1;
+
+function projection(p) {
+  if (p.type === "eq") return {
+    xy: (lat, lon) => [((lon < p.lon0 ? lon + 360 : lon) - p.lon0) * p.k, (p.top - lat) * p.k],
+    ll: (x, y) => { let lon = x / p.k + p.lon0; if (lon > 180) lon -= 360; return [p.top - y / p.k, lon]; },
+  };
+  return {
+    xy(lat, lon) {
+      const l = lon < -30 ? lon + 360 : lon, rho = p.g - lat * RAD, th = p.n * (l - p.lon0) * RAD;
+      return [p.ox + p.scale * rho * Math.sin(th), p.oy - p.scale * (p.rho0 - rho * Math.cos(th))];
+    },
+    ll(x, y) {
+      const e = (x - p.ox) / p.scale, nn = (p.oy - y) / p.scale, rho = Math.hypot(e, p.rho0 - nn), th = Math.atan2(e, p.rho0 - nn);
+      let lon = p.lon0 + th / p.n / RAD;
+      if (lon > 180) lon -= 360;
+      return [(p.g - rho) / RAD, lon];
+    },
+  };
+}
+
+function km(a, b) {
+  const la1 = a[0] * RAD, la2 = b[0] * RAD, dla = la2 - la1, dlo = (b[1] - a[1]) * RAD;
+  const h = Math.sin(dla / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dlo / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Промах до места: расстояние до ближайшей его точки минус радиус самого места. */
+function miss(place, ll) {
+  let bestKm = Infinity, at = place.p[0];
+  for (const p of place.p) { const d = km(ll, p); if (d < bestKm) { bestKm = d; at = p; } }
+  return {km: Math.max(0, bestKm - place.r), at};
+}
+
+function scoreFor(map, d) {
+  const [full, zero] = G.score[map];
+  return d <= full ? 100 : d >= zero ? 0 : Math.round(100 * (zero - d) / (zero - full));
+}
+
+const fmtKm = d => d < 10 ? "меньше 10" : d < 1000 ? String(Math.round(d / 10) * 10) : (Math.round(d / 100) * 100).toLocaleString("ru-RU");
+
+function el(name, attrs) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function buildMap(key) {
+  const m = G.maps[key];
+  svg = el("svg", {viewBox: `0 0 ${m.w} ${m.h}`, class: key, role: "img", "aria-label": key === "r" ? "Контурная карта России" : "Контурная карта мира"});
+  svg.append(el("rect", {class: "sea", width: m.w, height: m.h}), el("path", {class: "grid", d: m.grid}));
+  if (m.main) svg.append(el("path", {class: "grid main", d: m.main}));
+  svg.append(el("path", {class: "land", d: m.land}), el("path", {class: "lakes", d: m.lakes}), el("path", {class: "rivers", d: m.rivers}),
+    el("g", {id: "marks"}));
+  svg.addEventListener("click", tap);
+  $("mapbox").replaceChildren(svg);
+}
+
+/** Размер карты: при zoom = 1 она по высоте занимает около половины экрана, шире экрана — листается пальцем. */
+function size(keep) {
+  const m = G.maps[state.map], box = $("mapbox"), cw = box.clientWidth || 340;
+  const fit = cw * m.h / m.w, want = Math.max(fit, Math.min(innerHeight * 0.5, 440));
+  const h = want * zoom, w = h * m.w / m.h;
+  const cx = keep ? (box.scrollLeft + cw / 2) / (svg.clientWidth || w) : null, cy = keep ? (box.scrollTop + box.clientHeight / 2) / (svg.clientHeight || h) : null;
+  svg.style.width = w + "px";
+  svg.style.height = h + "px";
+  box.style.height = Math.min(h, Math.max(want, innerHeight * 0.62)) + 2 + "px";
+  if (keep) { box.scrollLeft = cx * w - cw / 2; box.scrollTop = cy * h - box.clientHeight / 2; }
+  marks();
+}
+
+function centre(lat, lon, smooth) {
+  const m = G.maps[state.map], box = $("mapbox"), [x, y] = state.proj.xy(lat, lon);
+  box.scrollTo({left: x / m.w * svg.clientWidth - box.clientWidth / 2, top: y / m.h * svg.clientHeight - box.clientHeight / 2,
+    behavior: smooth ? "smooth" : "auto"});
+}
+
+function tap(e) {
+  const s = state;
+  if (!s || s.done) return;
+  const r = svg.getBoundingClientRect(), m = G.maps[s.map];
+  s.pin = [(e.clientX - r.left) / r.width * m.w, (e.clientY - r.top) / r.height * m.h];
+  $("go").disabled = false;
+  $("tip").textContent = "Метку можно переставить. Готов — жми «Ответить».";
+  marks();
+}
+
+function marks() {
+  const s = state, g = svg && svg.querySelector("#marks");
+  if (!s || !g) return;
+  const m = G.maps[s.map], u = m.w / (svg.clientWidth || m.w);  // единиц карты в одном пикселе экрана
+  const out = [];
+  if (s.done) {
+    const place = s.place;
+    for (const p of place.p) {
+      const [x, y] = s.proj.xy(p[0], p[1]);
+      if (place.r) {
+        const [, y2] = s.proj.xy(p[0] + place.r / 111.2, p[1]);  // радиус места в единицах карты
+        out.push(el("circle", {class: "area", cx: x, cy: y, r: Math.abs(y - y2)}));
+      }
+    }
+    for (const p of place.p) {
+      const [x, y] = s.proj.xy(p[0], p[1]);
+      out.push(el("circle", {class: "target", cx: x, cy: y, r: (place.p.length > 6 ? 3.5 : 6) * u}));
+    }
+    if (s.pin && s.last.km > 0) {
+      const [x, y] = s.proj.xy(s.last.at[0], s.last.at[1]);
+      if (Math.abs(x - s.pin[0]) < m.w * 0.6) out.push(el("line", {class: "miss", x1: s.pin[0], y1: s.pin[1], x2: x, y2: y}));
+    }
+  }
+  if (s.pin) out.push(el("circle", {class: "pin", cx: s.pin[0], cy: s.pin[1], r: 7 * u}));
+  g.replaceChildren(...out);
+}
+
+function hud() {
+  const s = state;
+  $("round").textContent = `${Math.min(s.n + 1, s.list.length)} / ${s.list.length}`;
+  $("score").textContent = `★ ${s.score}`;
+}
+
+function next() {
+  const s = state;
+  s.place = s.list[s.n];
+  s.pin = null; s.done = false; s.last = null;
+  $("num").textContent = s.place.k;
+  $("ask").textContent = `Где находится: ${s.place.n}?`;
+  $("hint").textContent = "";
+  $("hint").className = "hint";
+  $("tip").textContent = "Нажми на карту, чтобы поставить метку.";
+  $("go").textContent = "📍 Ответить";
+  $("go").disabled = true;
+  hud();
+  marks();
+}
+
+function answer() {
+  const s = state;
+  if (s.done) { s.n++; return s.n < s.list.length ? next() : finish(); }
+  if (!s.pin) return;
+  const ll = s.proj.ll(s.pin[0], s.pin[1]), res = miss(s.place, ll), pts = scoreFor(s.map, res.km);
+  s.done = true; s.last = res;
+  s.score += pts;
+  if (pts >= GOOD) s.good++;
+  else s.errors.set(s.place, `${s.place.n} (${s.place.k}) — промах ${fmtKm(res.km)} км, +${pts}`);
+  const hint = $("hint");
+  hint.className = "hint" + (pts >= GOOD ? " ok" : "");
+  hint.textContent = res.km === 0 ? `🎯 Точно! +${pts}` : pts >= GOOD ? `Близко: промах ${fmtKm(res.km)} км. +${pts}` :
+    pts ? `Промах ${fmtKm(res.km)} км. +${pts}` : `Далеко: промах ${fmtKm(res.km)} км. Смотри, где это на самом деле.`;
+  $("tip").textContent = "Зелёным отмечено настоящее место.";
+  $("go").textContent = s.n + 1 < s.list.length ? "Дальше →" : "Итоги";
+  hud();
+  marks();
+  centre(res.at[0], res.at[1], true);
+}
+
+function start(id) {
+  const set = id.startsWith("all_") ? null : G.sets.find(x => x[0] === id), map = set ? set[2] : id.slice(4);
+  const pool = PLACES.filter(p => set ? p.s === id : p.map === map);
+  const seen = new Set(), list = shuffle(pool).filter(p => !seen.has(p.n) && seen.add(p.n)).slice(0, ROUNDS);
+  state = {id, map, proj: projection(G.maps[map].proj), list, n: 0, score: 0, good: 0, errors: new Map(), pin: null, done: false};
+  zoom = 1;
+  show("game");
+  buildMap(map);
+  size(false);
+  centre(...(map === "r" ? [60, 95] : [35, 45]), false);
+  next();
+}
+
+function finish() {
+  const s = state;
+  state = null;
+  const record = best.save(s.id, s.score);
+  $("final").textContent = `${points(s.score)} из ${s.list.length * 100}`;
+  $("hits").textContent = `Точных ответов: ${s.good} из ${s.list.length}`;
+  $("best").textContent = record && s.score ? "🏆 Новый рекорд!" : `Рекорд: ${best.get(s.id)}`;
+  errorList(s.errors);
+  claimXP("m", s.good);
+  $("again").onclick = () => start(s.id);
+  show("over");
+}
+
+function home() {
+  state = null;
+  const box = $("kinds");
+  box.replaceChildren();
+  let any = false;
+  for (const [map, title] of [["w", "Карта мира"], ["r", "Карта России"]]) {
+    const sets = G.sets.filter(x => x[2] === map && PLACES.filter(p => p.s === x[0]).length >= 8);
+    if (!sets.length) continue;
+    any = true;
+    const h = document.createElement("h2"), grid = document.createElement("div");
+    h.className = "group"; h.textContent = title;
+    grid.className = "choices";
+    const total = PLACES.filter(p => p.map === map).length;
+    const all = total > Math.max(...sets.map(x => PLACES.filter(p => p.s === x[0]).length)) ? [["all_" + map, map === "w" ? "🎲 Весь мир" : "🎲 Вся Россия"]] : [];
+    for (const [id, name] of [...all, ...sets]) {
+      const b = document.createElement("button");
+      b.className = "choice";
+      b.innerHTML = `<span></span><small>${best.get(id) ? "рекорд " + best.get(id) : "ещё не играл"}</small>`;
+      b.firstChild.textContent = name;
+      b.addEventListener("click", () => start(id));
+      grid.append(b);
+    }
+    box.append(h, grid);
+  }
+  $("none").hidden = any;
+  show("home");
+}
+
+$("go").addEventListener("click", answer);
+$("plus").addEventListener("click", () => { zoom = Math.min(4, zoom * 1.5); size(true); });
+$("minus").addEventListener("click", () => { zoom = Math.max(1, zoom / 1.5); size(true); });
+addEventListener("resize", () => { if (state) size(true); });
+$("quit").addEventListener("click", () => state ? finish() : home());  // «Закончить»: сразу итоги и опыт в бота
+$("menu").addEventListener("click", home);
+if (G) {
+  PLACES = G.places.filter(p => fits(p.m)).map(p => ({...p, map: G.sets.find(x => x[0] === p.s)[2]}));
+  $("subj").textContent = `🌍 География · ${MODE_TITLE}`;
+  home();
+} else {
+  $("none").hidden = false;
+  $("none").textContent = "Не получилось загрузить карту. Проверь интернет и открой игру ещё раз.";
+}
+</script>
+</body>
+</html>
