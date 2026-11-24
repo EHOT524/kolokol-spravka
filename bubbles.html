@@ -33,7 +33,7 @@
   <header>
     <h1>🫧 Лопни пузырь</h1>
     <p class="subject" id="subj"></p>
-    <p class="lead" style="margin-top:8px">Сверху задание, снизу летят пузыри. Лопай пальцем только те, что подходят. Ошибся — минус жизнь, жизней три. После 8 верных — новое задание, и пузыри летят быстрее.</p>
+    <p class="lead" style="margin-top:8px">Лопай только пузыри, которые подходят к заданию. За неверный пузырь теряешь жизнь, за пропущенный верный — 1 очко. Счёт не падает ниже нуля. После 8 верных — новое задание, и пузыри летят быстрее.</p>
   </header>
   <button class="main" id="all">🎲 Все темы подряд</button>
   <section class="sheet">
@@ -73,7 +73,7 @@
 <script>
 "use strict";
 // Тема — группы, которые не пересекаются (это проверяет selfcheck.py). Лопать одну группу, остальные летят ловушками.
-const NEED = 8, LIVES = 3, FILLS = ["--b1", "--b2", "--b3", "--b4", "--b5"];
+const NEED = 8, LIVES = 3, MISS_POINTS = 1, FILLS = ["--b1", "--b2", "--b3", "--b4", "--b5"];
 const best = records("bubbles");
 const sea = $("sea");
 let topics = [], state = null, raf = 0;
@@ -180,7 +180,17 @@ function tick(now) {
     b.el.style.setProperty("--at", at);
     if (!b.dead && b.y < -b.h) {
       b.dead = true; b.el.remove();
-      if (b.right && s.combo) { s.combo = 0; hud(); }  // упущенный нужный пузырь обрывает серию
+      if (b.right) {
+        const penalty = Math.min(MISS_POINTS, s.score);
+        s.score -= penalty;
+        s.combo = 0;
+        if (now >= s.hintUntil) {
+          $("hint").className = "hint";
+          $("hint").textContent = penalty ? "Пропустил верный пузырь · −1 очко" : "Пропустил верный пузырь";
+          s.hintUntil = now + 1500;
+        }
+        hud();
+      }
     }
   }
   s.bubbles = s.bubbles.filter(b => !b.dead || b.el.isConnected);
